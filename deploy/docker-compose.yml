@@ -20,6 +20,19 @@ services:
       - letsencrypt:/letsencrypt
     restart: unless-stopped
 
+  mongo:
+    image: mongo:7
+    container_name: poi-mongo
+    volumes:
+      - mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
   client:
     image: ghcr.io/${GITHUB_OWNER}/poi-client:${IMAGE_TAG:-latest}
     container_name: poi-client
@@ -34,6 +47,9 @@ services:
   server:
     image: ghcr.io/${GITHUB_OWNER}/poi-server:${IMAGE_TAG:-latest}
     container_name: poi-server
+    depends_on:
+      mongo:
+        condition: service_healthy
     environment:
       MONGODB_URI: ${MONGODB_URI}
       PORT: "3000"
@@ -50,3 +66,4 @@ services:
 
 volumes:
   letsencrypt:
+  mongo-data:
