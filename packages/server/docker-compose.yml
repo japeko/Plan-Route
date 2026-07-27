@@ -1,0 +1,36 @@
+services:
+  server:
+    build:
+      context: ../..
+      dockerfile: packages/server/Dockerfile
+    container_name: poi-server
+    environment:
+      # Assumes packages/database's compose stack is already running and
+      # publishes MongoDB on the host at 27017 (packages/server/.env isn't
+      # reused here — its MONGODB_URI points at "localhost", which inside
+      # this container would mean the container itself, not the host).
+      MONGODB_URI: mongodb://host.docker.internal:27017/poi
+      PORT: "3000"
+      CLIENT_ORIGIN: http://localhost:8080
+    extra_hosts:
+      # host.docker.internal is automatic on Docker Desktop; this makes it
+      # resolve on Linux Docker Engine too.
+      - "host.docker.internal:host-gateway"
+    labels:
+      - traefik.enable=true
+      # PathPrefix makes this more specific than the client's plain Host
+      # rule, so /api requests go here and everything else goes to the
+      # client, both through the same Traefik entrypoint.
+      - traefik.http.routers.server.rule=Host(`localhost`) && PathPrefix(`/api`)
+      - traefik.http.routers.server.entrypoints=web
+      - traefik.http.services.server.loadbalancer.server.port=3000
+    networks:
+      - traefik
+    restart: unless-stopped
+
+networks:
+  # Same external Traefik network as packages/client/docker-compose.yml —
+  # see that file for the setup steps (docker network create traefik, plus
+  # a separately-run Traefik instance attached to it).
+  traefik:
+    external: true
