@@ -3,7 +3,7 @@ import { ref } from "vue";
 import { geocodeAddressInFinland } from "@/services/geocoding.service";
 import { fetchRoadTrip } from "@/services/routing.service";
 import type { GeocodedPoint, NavigationStep, RoutePlan } from "@/types/route.types";
-import { formatDistance } from "@/utils/format";
+import { formatDistance, formatDuration } from "@/utils/format";
 
 const emit = defineEmits<{
   "route-planned": [route: RoutePlan];
@@ -15,7 +15,7 @@ const endAddress = ref("");
 const viaAddresses = ref<string[]>([]);
 const isPlanning = ref(false);
 const errorMessage = ref<string | null>(null);
-const summary = ref<{ distanceKm: string; durationMin: string } | null>(null);
+const summary = ref<{ distanceKm: string; duration: string } | null>(null);
 const wasReordered = ref(false);
 const directions = ref<NavigationStep[]>([]);
 const showDirections = ref(false);
@@ -65,7 +65,7 @@ async function planRoute(): Promise<void> {
 
     summary.value = {
       distanceKm: (trip.distanceMeters / 1000).toFixed(1),
-      durationMin: Math.round(trip.durationSeconds / 60).toString(),
+      duration: formatDuration(trip.durationSeconds),
     };
 
     emit("route-planned", {
@@ -171,7 +171,7 @@ function clearRoute(): void {
       v-if="summary"
       class="summary"
     >
-      {{ summary.distanceKm }} km &middot; {{ summary.durationMin }} min
+      {{ summary.distanceKm }} km &middot; {{ summary.duration }}
     </p>
     <p
       v-if="wasReordered"
