@@ -1,4 +1,5 @@
 import type { LatLngTuple } from "leaflet";
+import type { PoiAlongRouteRequestDto } from "@poi/shared";
 
 export interface GeocodedPoint {
   label: string;
@@ -12,3 +13,5 @@ export interface RoutePlan {
   distanceMeters: number;
   durationSeconds: number;
 }
+
+export type PoiFilterOptions = Omit<PoiAlongRouteRequestDto, "route">;

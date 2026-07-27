@@ -1,18 +1,17 @@
-import type { PointOfInterest } from "@poi/shared";
-import type { LatLngBounds } from "leaflet";
+import type { GeoLineString, PoiAlongRouteRequestDto, PointOfInterest } from "@poi/shared";
 import { POI_API_BASE_URL } from "@/constants/api.constants";
+import type { PoiFilterOptions } from "@/types/route.types";
 
 export class PoiApiError extends Error {}
 
-export async function fetchPoisInViewport(bounds: LatLngBounds): Promise<PointOfInterest[]> {
-  const params = new URLSearchParams({
-    minLng: String(bounds.getWest()),
-    minLat: String(bounds.getSouth()),
-    maxLng: String(bounds.getEast()),
-    maxLat: String(bounds.getNorth()),
-  });
+export async function fetchPoisAlongRoute(route: GeoLineString, filters: PoiFilterOptions): Promise<PointOfInterest[]> {
+  const body: PoiAlongRouteRequestDto = { route, ...filters };
 
-  const response = await fetch(`${POI_API_BASE_URL}/viewport?${params.toString()}`);
+  const response = await fetch(`${POI_API_BASE_URL}/along-route`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
 
   if (!response.ok) {
     throw new PoiApiError(`Failed to fetch points of interest (status ${response.status}).`);

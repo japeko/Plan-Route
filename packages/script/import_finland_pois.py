@@ -6,6 +6,12 @@ already used by packages/client for tiles, geocoding, and routing. Safe to
 re-run: records are upserted by their OSM element id, so reruns update
 existing entries instead of duplicating them.
 
+A "gas station" record can offer gasoline, electric charging, or both:
+fuel (amenity=fuel) and charging (amenity=charging_station) OSM elements
+found within STATION_MERGE_PROXIMITY_METERS of each other are merged into
+a single station; a charging point with no nearby fuel pump becomes its
+own electric-only station, and vice versa.
+
 Usage:
     pip install -r requirements.txt
     python import_finland_pois.py [--mongodb-uri mongodb://localhost:27017/poi]
@@ -32,16 +38,20 @@ REQUEST_HEADERS = {"User-Agent": "finland-poi-import-script/1.0 (dev/personal pr
 FINLAND_ISO_CODE = "FI"
 COLLECTION_NAME = "pointsOfInterest"
 RESTAURANT_PROXIMITY_METERS = 60
+STATION_MERGE_PROXIMITY_METERS = 50
 REQUEST_TIMEOUT_SECONDS = 220
 
-OVERPASS_QUERY = f"""
-[out:json][timeout:180];
+def build_query(amenity: str) -> str:
+    # One amenity per request: overpass-api.de's public gateway has a hard
+    # timeout shorter than the [timeout:N] budget below, and a single
+    # combined fuel+charging_station+restaurant nationwide query reliably
+    # exceeded it (504) even though each amenity alone comfortably fits.
+    return f"""
+[out:json][timeout:120];
 area["ISO3166-1"="{FINLAND_ISO_CODE}"][admin_level=2]->.finland;
 (
-  node["amenity"="fuel"](area.finland);
-  way["amenity"="fuel"](area.finland);
-  node["amenity"="restaurant"](area.finland);
-  way["amenity"="restaurant"](area.finland);
+  node["amenity"="{amenity}"](area.finland);
+  way["amenity"="{amenity}"](area.finland);
 );
 out center tags;
 """
@@ -56,14 +66,43 @@ class OsmElement:
     tags: dict[str, str]
 
 
-def fetch_osm_elements() -> list[OsmElement]:
-    response = requests.post(
-        OVERPASS_URL,
-        data={"data": OVERPASS_QUERY},
-        headers=REQUEST_HEADERS,
-        timeout=REQUEST_TIMEOUT_SECONDS,
-    )
-    response.raise_for_status()
+@dataclass
+class StationRecord:
+    osm_id: str
+    name: str
+    address: str | None
+    lat: float
+    lon: float
+    has_gasoline: bool
+    has_electric_charging: bool
+    has_restaurant: bool = False
+
+
+def fetch_osm_elements_for_amenity(amenity: str, *, max_attempts: int = 4) -> list[OsmElement]:
+    query = build_query(amenity)
+    response: requests.Response | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            response = requests.post(
+                OVERPASS_URL,
+                data={"data": query},
+                headers=REQUEST_HEADERS,
+                timeout=REQUEST_TIMEOUT_SECONDS,
+            )
+            response.raise_for_status()
+            break
+        except requests.RequestException as err:
+            if attempt == max_attempts:
+                raise
+            wait_seconds = 10 * attempt
+            print(
+                f"Overpass request for '{amenity}' failed (attempt {attempt}/{max_attempts}): {err}. "
+                f"Retrying in {wait_seconds}s...",
+                file=sys.stderr,
+            )
+            time.sleep(wait_seconds)
+
+    assert response is not None
     payload: dict[str, Any] = response.json()
 
     elements: list[OsmElement] = []
@@ -78,14 +117,14 @@ def fetch_osm_elements() -> list[OsmElement]:
             continue
 
         tags = el.get("tags", {})
-        amenity = tags.get("amenity")
-        if amenity not in ("fuel", "restaurant"):
+        el_amenity = tags.get("amenity")
+        if el_amenity != amenity:
             continue
 
         elements.append(
             OsmElement(
                 osm_id=f"{el['type']}/{el['id']}",
-                amenity=amenity,
+                amenity=el_amenity,
                 lat=lat,
                 lon=lon,
                 tags=tags,
@@ -120,51 +159,118 @@ def haversine_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> floa
     return 2 * radius * math.asin(math.sqrt(a))
 
 
-def has_attached_restaurant(fuel: OsmElement, restaurants: list[OsmElement]) -> bool:
-    amenity_tag = fuel.tags.get("amenity", "")
-    if "restaurant" in amenity_tag.split(";") or fuel.tags.get("cuisine"):
-        return True
-
+def is_nearby(a: OsmElement, b: OsmElement, max_meters: float) -> bool:
     # Bounding-box pre-filter (~0.001 deg lat, ~0.002 deg lon at Finnish
-    # latitudes is comfortably wider than RESTAURANT_PROXIMITY_METERS)
-    # before paying for the haversine call.
-    for restaurant in restaurants:
-        if abs(restaurant.lat - fuel.lat) > 0.001 or abs(restaurant.lon - fuel.lon) > 0.002:
+    # latitudes is comfortably wider than any max_meters we use) before
+    # paying for the haversine call.
+    if abs(a.lat - b.lat) > 0.001 or abs(a.lon - b.lon) > 0.002:
+        return False
+    return haversine_meters(a.lat, a.lon, b.lat, b.lon) <= max_meters
+
+
+def has_attached_restaurant(element: OsmElement, restaurants: list[OsmElement]) -> bool:
+    amenity_tag = element.tags.get("amenity", "")
+    if "restaurant" in amenity_tag.split(";") or element.tags.get("cuisine"):
+        return True
+    return any(is_nearby(element, restaurant, RESTAURANT_PROXIMITY_METERS) for restaurant in restaurants)
+
+
+def merge_fuel_and_charging(
+    fuel_elements: list[OsmElement],
+    charging_elements: list[OsmElement],
+    restaurant_elements: list[OsmElement],
+) -> list[StationRecord]:
+    matched_charging_ids: set[str] = set()
+    stations: list[StationRecord] = []
+
+    for fuel in fuel_elements:
+        has_electric = False
+        for charging in charging_elements:
+            if charging.osm_id in matched_charging_ids:
+                continue
+            if is_nearby(fuel, charging, STATION_MERGE_PROXIMITY_METERS):
+                has_electric = True
+                matched_charging_ids.add(charging.osm_id)
+                break
+
+        stations.append(
+            StationRecord(
+                osm_id=fuel.osm_id,
+                name=build_name(fuel.tags, "Gas station"),
+                address=build_address(fuel.tags),
+                lat=fuel.lat,
+                lon=fuel.lon,
+                has_gasoline=True,
+                has_electric_charging=has_electric,
+                has_restaurant=has_attached_restaurant(fuel, restaurant_elements),
+            )
+        )
+
+    for charging in charging_elements:
+        if charging.osm_id in matched_charging_ids:
             continue
-        if haversine_meters(fuel.lat, fuel.lon, restaurant.lat, restaurant.lon) <= RESTAURANT_PROXIMITY_METERS:
-            return True
-    return False
+        stations.append(
+            StationRecord(
+                osm_id=charging.osm_id,
+                name=build_name(charging.tags, "EV charging station"),
+                address=build_address(charging.tags),
+                lat=charging.lat,
+                lon=charging.lon,
+                has_gasoline=False,
+                has_electric_charging=True,
+                has_restaurant=has_attached_restaurant(charging, restaurant_elements),
+            )
+        )
+
+    return stations
 
 
-def to_poi_document(element: OsmElement, *, has_restaurant: bool | None = None) -> dict[str, Any]:
-    now = datetime.now(timezone.utc)
-    doc: dict[str, Any] = {
-        "osmId": element.osm_id,
-        "name": build_name(element.tags, "Gas station" if element.amenity == "fuel" else "Restaurant"),
-        "type": "gas_station" if element.amenity == "fuel" else "restaurant",
-        "location": {"type": "Point", "coordinates": [element.lon, element.lat]},
-        "address": build_address(element.tags),
-        "updatedAt": now,
+def station_to_document(station: StationRecord) -> dict[str, Any]:
+    return {
+        "osmId": station.osm_id,
+        "name": station.name,
+        "type": "gas_station",
+        "location": {"type": "Point", "coordinates": [station.lon, station.lat]},
+        "address": station.address,
+        "hasGasoline": station.has_gasoline,
+        "hasElectricCharging": station.has_electric_charging,
+        "hasRestaurant": station.has_restaurant,
+        "updatedAt": datetime.now(timezone.utc),
     }
-    if element.amenity == "fuel":
-        doc["hasRestaurant"] = bool(has_restaurant)
-    return doc
+
+
+def restaurant_to_document(restaurant: OsmElement) -> dict[str, Any]:
+    return {
+        "osmId": restaurant.osm_id,
+        "name": build_name(restaurant.tags, "Restaurant"),
+        "type": "restaurant",
+        "location": {"type": "Point", "coordinates": [restaurant.lon, restaurant.lat]},
+        "address": build_address(restaurant.tags),
+        "updatedAt": datetime.now(timezone.utc),
+    }
 
 
 def import_pois(mongodb_uri: str) -> None:
-    print("Fetching gas stations and restaurants in Finland from Overpass API...")
-    elements = fetch_osm_elements()
+    print("Fetching gas stations, EV charging points, and restaurants in Finland from Overpass API...")
+    print("  (one request per category, paced to avoid the public Overpass gateway's rate limit/timeout)")
+    fuel_elements = fetch_osm_elements_for_amenity("fuel")
+    print(f"  fuel: {len(fuel_elements)}")
+    time.sleep(5)
+    charging_elements = fetch_osm_elements_for_amenity("charging_station")
+    print(f"  charging_station: {len(charging_elements)}")
+    time.sleep(5)
+    restaurant_elements = fetch_osm_elements_for_amenity("restaurant")
+    print(f"  restaurant: {len(restaurant_elements)}")
 
-    fuel_elements = [el for el in elements if el.amenity == "fuel"]
-    restaurant_elements = [el for el in elements if el.amenity == "restaurant"]
-    print(f"Fetched {len(fuel_elements)} gas stations and {len(restaurant_elements)} restaurants.")
+    print("Merging co-located fuel/charging points into stations and checking for attached restaurants...")
+    stations = merge_fuel_and_charging(fuel_elements, charging_elements, restaurant_elements)
+    both_count = sum(1 for s in stations if s.has_gasoline and s.has_electric_charging)
+    print(
+        f"Built {len(stations)} gas stations ({both_count} offer both gasoline and electric charging)."
+    )
 
-    print("Determining which gas stations have an attached restaurant...")
-    documents: list[dict[str, Any]] = []
-    for fuel in fuel_elements:
-        documents.append(to_poi_document(fuel, has_restaurant=has_attached_restaurant(fuel, restaurant_elements)))
-    for restaurant in restaurant_elements:
-        documents.append(to_poi_document(restaurant))
+    documents: list[dict[str, Any]] = [station_to_document(s) for s in stations]
+    documents += [restaurant_to_document(r) for r in restaurant_elements]
 
     client = MongoClient(mongodb_uri)
     collection = client.get_default_database()[COLLECTION_NAME]

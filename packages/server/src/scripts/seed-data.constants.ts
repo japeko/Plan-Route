@@ -18,6 +18,8 @@ export const SEED_POIS: CreatePoiDto[] = [
     name: "Ruoholahti Fuel Stop",
     location: { type: "Point", coordinates: [24.9147, 60.1613] },
     address: "Itamerenkatu 5, Helsinki",
+    hasGasoline: true,
+    hasElectricCharging: false,
     hasRestaurant: false,
   },
   {
@@ -25,6 +27,17 @@ export const SEED_POIS: CreatePoiDto[] = [
     name: "Pasila Travel Center",
     location: { type: "Point", coordinates: [24.9327, 60.1985] },
     address: "Ratapihantie 9, Helsinki",
+    hasGasoline: true,
+    hasElectricCharging: true,
     hasRestaurant: true,
+  },
+  {
+    type: "gas_station",
+    name: "Viikki EV Charging",
+    location: { type: "Point", coordinates: [25.0193, 60.2265] },
+    address: "Viikinkaari 2, Helsinki",
+    hasGasoline: false,
+    hasElectricCharging: true,
+    hasRestaurant: false,
   },
 ];

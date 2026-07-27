@@ -2,8 +2,8 @@
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { onMounted, onUnmounted, ref, watch } from "vue";
-import type { PointOfInterest } from "@poi/shared";
-import { fetchPoisInViewport } from "@/api/poi.api";
+import type { GasStationPoi, GeoLineString, PointOfInterest } from "@poi/shared";
+import { fetchPoisAlongRoute } from "@/api/poi.api";
 import {
   FINLAND_BOUNDS,
   FINLAND_CENTER,
@@ -12,9 +12,9 @@ import {
   OSM_TILE_LAYER_ATTRIBUTION,
   OSM_TILE_LAYER_URL,
 } from "@/constants/map.constants";
-import type { RoutePlan } from "@/types/route.types";
+import type { PoiFilterOptions, RoutePlan } from "@/types/route.types";
 
-const props = defineProps<{ route: RoutePlan | null }>();
+const props = defineProps<{ route: RoutePlan | null; filters: PoiFilterOptions }>();
 
 const mapContainer = ref<HTMLDivElement | null>(null);
 const errorMessage = ref<string | null>(null);
@@ -22,31 +22,65 @@ const errorMessage = ref<string | null>(null);
 let map: L.Map | null = null;
 let poiLayer: L.LayerGroup | null = null;
 let routeLayer: L.LayerGroup | null = null;
-let viewportRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+
+function stationFillColor(poi: GasStationPoi): string {
+  if (poi.hasGasoline && poi.hasElectricCharging) {
+    return "#0c8599";
+  }
+  return poi.hasElectricCharging ? "#7048e8" : "#1971c2";
+}
 
 function poiMarkerIcon(poi: PointOfInterest): L.DivIcon {
-  const color = poi.type === "restaurant" ? "#e8590c" : poi.hasRestaurant ? "#2f9e44" : "#1971c2";
+  const fill = poi.type === "restaurant" ? "#e8590c" : stationFillColor(poi);
+  const border = poi.type === "gas_station" && poi.hasRestaurant ? "#f59f00" : "#ffffff";
   return L.divIcon({
     className: "poi-marker",
-    html: `<span style="background:${color}"></span>`,
+    html: `<span style="background:${fill};border-color:${border}"></span>`,
     iconSize: [16, 16],
     iconAnchor: [8, 8],
   });
 }
 
 function poiPopupHtml(poi: PointOfInterest): string {
-  const typeLabel = poi.type === "restaurant" ? "Restaurant" : "Gas station";
-  const extra = poi.type === "gas_station" ? (poi.hasRestaurant ? "Has a restaurant" : "Cold station (fuel only)") : "";
   const address = poi.address ? `<br>${poi.address}` : "";
-  return `<strong>${poi.name}</strong><br>${typeLabel}${extra ? ` &mdash; ${extra}` : ""}${address}`;
+
+  if (poi.type === "restaurant") {
+    return `<strong>${poi.name}</strong><br>Restaurant${address}`;
+  }
+
+  const fuelParts: string[] = [];
+  if (poi.hasGasoline) {
+    fuelParts.push("Gasoline");
+  }
+  if (poi.hasElectricCharging) {
+    fuelParts.push("Electric charging");
+  }
+  const fuelLabel = fuelParts.length > 0 ? fuelParts.join(" + ") : "Fuel";
+  const restaurantLabel = poi.hasRestaurant ? "Has a restaurant" : "Cold station (no restaurant)";
+
+  return `<strong>${poi.name}</strong><br>${fuelLabel} &mdash; ${restaurantLabel}${address}`;
 }
 
-async function refreshPois(): Promise<void> {
-  if (!map || !poiLayer) {
+function routeToGeoLineString(route: RoutePlan): GeoLineString {
+  return {
+    type: "LineString",
+    coordinates: route.path.map(([lat, lng]) => [lng, lat]),
+  };
+}
+
+async function refreshPoisAlongRoute(): Promise<void> {
+  if (!poiLayer) {
     return;
   }
+
+  if (!props.route) {
+    poiLayer.clearLayers();
+    errorMessage.value = null;
+    return;
+  }
+
   try {
-    const pois = await fetchPoisInViewport(map.getBounds());
+    const pois = await fetchPoisAlongRoute(routeToGeoLineString(props.route), props.filters);
     poiLayer.clearLayers();
     for (const poi of pois) {
       const [lng, lat] = poi.location.coordinates;
@@ -54,13 +88,8 @@ async function refreshPois(): Promise<void> {
     }
     errorMessage.value = null;
   } catch {
-    errorMessage.value = "Failed to load gas stations and restaurants.";
+    errorMessage.value = "Failed to load gas stations and restaurants along the route.";
   }
-}
-
-function scheduleViewportRefresh(): void {
-  clearTimeout(viewportRefreshTimer);
-  viewportRefreshTimer = setTimeout(refreshPois, 300);
 }
 
 function startEndIcon(kind: "start" | "end"): L.DivIcon {
@@ -108,17 +137,14 @@ onMounted(() => {
   poiLayer = L.layerGroup().addTo(map);
   routeLayer = L.layerGroup().addTo(map);
 
-  map.on("moveend", scheduleViewportRefresh);
-  void refreshPois();
+  watch(() => props.route, renderRoute);
+  watch([() => props.route, () => props.filters], refreshPoisAlongRoute, { deep: true });
 });
 
 onUnmounted(() => {
-  clearTimeout(viewportRefreshTimer);
   map?.remove();
   map = null;
 });
-
-watch(() => props.route, renderRoute);
 </script>
 
 <template>
@@ -127,6 +153,36 @@ watch(() => props.route, renderRoute);
       ref="mapContainer"
       class="map-container"
     />
+    <div
+      v-if="route"
+      class="legend"
+    >
+      <div>
+        <span
+          class="dot"
+          style="background: #1971c2"
+        />Gasoline
+      </div>
+      <div>
+        <span
+          class="dot"
+          style="background: #7048e8"
+        />Electric charging
+      </div>
+      <div>
+        <span
+          class="dot"
+          style="background: #0c8599"
+        />Both
+      </div>
+      <div>
+        <span
+          class="dot"
+          style="background: #e8590c"
+        />Restaurant
+      </div>
+      <div><span class="dot ring" />Station has a restaurant</div>
+    </div>
     <p
       v-if="errorMessage"
       class="map-error"
@@ -143,7 +199,9 @@ watch(() => props.route, renderRoute);
   width: 100%;
   height: 100%;
   border-radius: 50%;
-  border: 2px solid white;
+  border-width: 2px;
+  border-style: solid;
+  border-color: white;
   box-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
 }
 </style>
@@ -169,5 +227,34 @@ watch(() => props.route, renderRoute);
   padding: 0.4rem 0.75rem;
   border-radius: 4px;
   font-size: 0.85rem;
+}
+
+.legend {
+  position: absolute;
+  bottom: 1.5rem;
+  left: 0.5rem;
+  z-index: 1000;
+  background: white;
+  padding: 0.5rem 0.75rem;
+  border-radius: 6px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  font-size: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.dot {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  margin-right: 0.4rem;
+  border: 1px solid #adb5bd;
+}
+
+.dot.ring {
+  background: white;
+  border: 2px solid #f59f00;
 }
 </style>

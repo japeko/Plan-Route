@@ -14,7 +14,9 @@ async function main(): Promise<void> {
 
   const app = express();
   app.use(cors({ origin: CLIENT_ORIGIN }));
-  app.use(express.json());
+  // Default 100kb body limit is too small for a full-detail OSRM route
+  // geometry (thousands of coordinate pairs) sent to /pois/along-route.
+  app.use(express.json({ limit: "5mb" }));
 
   app.use("/api/pois", poiRouter);
 

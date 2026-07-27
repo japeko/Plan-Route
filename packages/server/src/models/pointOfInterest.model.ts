@@ -11,6 +11,8 @@ export interface PointOfInterestDocument {
   type: PoiType;
   location: GeoPointDocument;
   address?: string;
+  hasGasoline?: boolean;
+  hasElectricCharging?: boolean;
   hasRestaurant?: boolean;
 }
 
@@ -55,12 +57,16 @@ export const PointOfInterestModel = model<PointOfInterestDocument>(
 );
 
 export interface GasStationDocument extends PointOfInterestDocument {
+  hasGasoline: boolean;
+  hasElectricCharging: boolean;
   hasRestaurant: boolean;
 }
 
 export const GasStationModel = PointOfInterestModel.discriminator<GasStationDocument>(
   "gas_station",
   new Schema<GasStationDocument>({
+    hasGasoline: { type: Boolean, required: true },
+    hasElectricCharging: { type: Boolean, required: true },
     hasRestaurant: { type: Boolean, required: true },
   }),
 );

@@ -1,4 +1,4 @@
-import type { GeoPoint, PointOfInterest } from "./poi.types.js";
+import type { FuelType, GeoLineString, GeoPoint, PointOfInterest } from "./poi.types.js";
 
 // A plain Omit<Union, K> collapses the union into its common shape, which
 // loses the gas_station/restaurant discrimination. Distribute over the
@@ -11,6 +11,8 @@ export interface UpdatePoiDto {
   name?: string;
   location?: GeoPoint;
   address?: string;
+  hasGasoline?: boolean;
+  hasElectricCharging?: boolean;
   hasRestaurant?: boolean;
 }
 
@@ -31,4 +33,16 @@ export interface PoiNearbyQueryDto {
   lat: number;
   radiusMeters: number;
   type?: PointOfInterest["type"];
+}
+
+export interface PoiAlongRouteRequestDto {
+  route: GeoLineString;
+  radiusMeters: number;
+  showRestaurants: boolean;
+  showGasStations: boolean;
+  // Gas stations matching ANY of these fuel types are included. Empty
+  // array means "no gas stations match" (mirrors the checkbox UI: unchecking
+  // both fuel-type boxes hides all gas stations regardless of restaurant).
+  fuelTypes: FuelType[];
+  onlyWithRestaurant: boolean;
 }

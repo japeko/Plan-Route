@@ -3,6 +3,7 @@ import {
   createPoiHandler,
   deletePoiHandler,
   getPoiByIdHandler,
+  listPoisAlongRouteHandler,
   listPoisHandler,
   listPoisInViewportHandler,
   listPoisNearbyHandler,
@@ -13,6 +14,7 @@ export const poiRouter: ExpressRouter = Router();
 
 poiRouter.get("/viewport", listPoisInViewportHandler);
 poiRouter.get("/nearby", listPoisNearbyHandler);
+poiRouter.post("/along-route", listPoisAlongRouteHandler);
 poiRouter.get("/:id", getPoiByIdHandler);
 poiRouter.get("/", listPoisHandler);
 poiRouter.post("/", createPoiHandler);

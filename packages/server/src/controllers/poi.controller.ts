@@ -7,11 +7,13 @@ import {
   deletePoi,
   getPoiById,
   listPois,
+  listPoisAlongRoute,
   listPoisInViewport,
   listPoisNearby,
   updatePoi,
 } from "../services/poi.service.js";
 import {
+  alongRouteRequestSchema,
   createPoiSchema,
   listQuerySchema,
   nearbyQuerySchema,
@@ -54,6 +56,16 @@ export async function listPoisNearbyHandler(req: Request, res: Response, next: N
   try {
     const query = nearbyQuerySchema.parse(req.query);
     const pois = await listPoisNearby(query);
+    res.json(pois);
+  } catch (err) {
+    next(err);
+  }
+}
+
+export async function listPoisAlongRouteHandler(req: Request, res: Response, next: NextFunction): Promise<void> {
+  try {
+    const body = alongRouteRequestSchema.parse(req.body);
+    const pois = await listPoisAlongRoute(body);
     res.json(pois);
   } catch (err) {
     next(err);

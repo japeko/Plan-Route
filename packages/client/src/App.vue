@@ -1,10 +1,18 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import MapView from "@/components/MapView.vue";
+import RouteFilters from "@/components/RouteFilters.vue";
 import RoutePlanner from "@/components/RoutePlanner.vue";
-import type { RoutePlan } from "@/types/route.types";
+import { DEFAULT_POI_FILTERS } from "@/constants/filters.constants";
+import type { PoiFilterOptions, RoutePlan } from "@/types/route.types";
 
 const route = ref<RoutePlan | null>(null);
+const filters = ref<PoiFilterOptions>({ ...DEFAULT_POI_FILTERS });
+
+function handleRouteCleared(): void {
+  route.value = null;
+  filters.value = { ...DEFAULT_POI_FILTERS };
+}
 </script>
 
 <template>
@@ -13,11 +21,19 @@ const route = ref<RoutePlan | null>(null);
       <h1>Finland: Gas Stations &amp; Restaurants</h1>
       <RoutePlanner
         @route-planned="route = $event"
-        @route-cleared="route = null"
+        @route-cleared="handleRouteCleared"
+      />
+      <RouteFilters
+        v-if="route"
+        :filters="filters"
+        @update:filters="filters = $event"
       />
     </aside>
     <main class="map-area">
-      <MapView :route="route" />
+      <MapView
+        :route="route"
+        :filters="filters"
+      />
     </main>
   </div>
 </template>
@@ -36,11 +52,14 @@ const route = ref<RoutePlan | null>(null);
   overflow-y: auto;
   background: #f8f9fa;
   box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
 }
 
 .sidebar h1 {
   font-size: 1.1rem;
-  margin: 0 0 1rem;
+  margin: 0;
 }
 
 .map-area {
