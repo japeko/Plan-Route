@@ -18,7 +18,7 @@ function handleRouteCleared(): void {
 <template>
   <div class="app">
     <aside class="sidebar">
-      <h1>Finland: Gas Stations &amp; Restaurants</h1>
+      <h1>Roadside Stops (Finland)</h1>
       <RoutePlanner
         @route-planned="route = $event"
         @route-cleared="handleRouteCleared"
