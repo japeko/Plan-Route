@@ -2,7 +2,7 @@
 import { ref } from "vue";
 import { geocodeAddressInFinland } from "@/services/geocoding.service";
 import { fetchRoadTrip } from "@/services/routing.service";
-import type { GeocodedPoint, RoutePlan } from "@/types/route.types";
+import type { GeocodedPoint, NavigationStep, RoutePlan } from "@/types/route.types";
 
 const emit = defineEmits<{
   "route-planned": [route: RoutePlan];
@@ -16,6 +16,8 @@ const isPlanning = ref(false);
 const errorMessage = ref<string | null>(null);
 const summary = ref<{ distanceKm: string; durationMin: string } | null>(null);
 const wasReordered = ref(false);
+const directions = ref<NavigationStep[]>([]);
+const showDirections = ref(false);
 
 function addStop(): void {
   viaAddresses.value.push("");
@@ -23,6 +25,10 @@ function addStop(): void {
 
 function removeStop(index: number): void {
   viaAddresses.value.splice(index, 1);
+}
+
+function formatDistance(distanceMeters: number): string {
+  return distanceMeters >= 1000 ? `${(distanceMeters / 1000).toFixed(1)} km` : `${Math.round(distanceMeters)} m`;
 }
 
 async function planRoute(): Promise<void> {
@@ -46,6 +52,20 @@ async function planRoute(): Promise<void> {
       .filter((stop): stop is GeocodedPoint => stop !== undefined);
     wasReordered.value = trip.visitOrder.some((originalIndex, position) => originalIndex !== position);
 
+    // Each leg's OSRM "arrive" step is generic ("Arrive at your
+    // destination") even for an intermediate stop — replace it with the
+    // actual stop name so multi-stop directions read correctly.
+    const steps: NavigationStep[] = trip.legs.flatMap((legSteps, legIndex) =>
+      legSteps.map((step, stepIndex) => {
+        if (stepIndex !== legSteps.length - 1) {
+          return step;
+        }
+        const arrivalStop = orderedStops[legIndex + 1];
+        return arrivalStop ? { ...step, instruction: `Arrive at ${arrivalStop.label}` } : step;
+      }),
+    );
+    directions.value = steps;
+
     summary.value = {
       distanceKm: (trip.distanceMeters / 1000).toFixed(1),
       durationMin: Math.round(trip.durationSeconds / 60).toString(),
@@ -56,6 +76,7 @@ async function planRoute(): Promise<void> {
       path: trip.path,
       distanceMeters: trip.distanceMeters,
       durationSeconds: trip.durationSeconds,
+      steps,
     });
   } catch (err) {
     errorMessage.value = err instanceof Error ? err.message : "Failed to plan the route.";
@@ -71,6 +92,8 @@ function clearRoute(): void {
   summary.value = null;
   errorMessage.value = null;
   wasReordered.value = false;
+  directions.value = [];
+  showDirections.value = false;
   emit("route-cleared");
 }
 </script>
@@ -165,6 +188,27 @@ function clearRoute(): void {
     >
       {{ errorMessage }}
     </p>
+
+    <button
+      v-if="directions.length > 0"
+      type="button"
+      class="toggle-directions"
+      @click="showDirections = !showDirections"
+    >
+      {{ showDirections ? "Hide directions" : `Show directions (${directions.length})` }}
+    </button>
+    <ol
+      v-if="showDirections"
+      class="directions"
+    >
+      <li
+        v-for="(step, index) in directions"
+        :key="index"
+      >
+        <span class="instruction">{{ step.instruction }}</span>
+        <span class="step-distance">{{ formatDistance(step.distanceMeters) }}</span>
+      </li>
+    </ol>
   </form>
 </template>
 
@@ -276,5 +320,43 @@ button:disabled {
 .error {
   font-size: 0.85rem;
   color: #e03131;
+}
+
+.toggle-directions {
+  align-self: flex-start;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  background: #f8f9fa;
+  color: #1c7ed6;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.directions {
+  max-height: 260px;
+  overflow-y: auto;
+  margin: 0;
+  padding-left: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  font-size: 0.8rem;
+}
+
+.directions li {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.directions .instruction {
+  color: #212529;
+}
+
+.directions .step-distance {
+  flex-shrink: 0;
+  color: #868e96;
 }
 </style>
