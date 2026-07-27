@@ -9,6 +9,7 @@
 - `packages/client` — Vue 3 frontend
 - `packages/server` — Express API
 - `packages/shared` — Types, DTOs, utilities
+- `packages/database` — `docker-compose.yml` (MongoDB container) + `script/` (Python OSM import job, run via `docker compose up`)
 
 ## Coding Standards
 - TypeScript strict mode, no `any` types
