@@ -65,4 +65,20 @@ function handleRouteCleared(): void {
 .map-area {
   flex: 1;
 }
+
+@media (max-width: 640px) {
+  .app {
+    flex-direction: column;
+  }
+
+  .sidebar {
+    width: 100%;
+    max-height: 45vh;
+  }
+
+  .map-area {
+    flex: 1;
+    min-height: 0;
+  }
+}
 </style>
