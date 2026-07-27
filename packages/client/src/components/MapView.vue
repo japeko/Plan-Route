@@ -23,6 +23,7 @@ import {
   sliceUpcomingPath,
   watchVehiclePosition,
 } from "@/services/navigation.service";
+import { speak, stopSpeaking } from "@/services/speech.service";
 import type { PoiFilterOptions, RoutePlan } from "@/types/route.types";
 import { formatDistance } from "@/utils/format";
 
@@ -175,6 +176,7 @@ function stopNavigation(): void {
   currentStepIndex.value = 0;
   vehicleMarker?.remove();
   vehicleMarker = null;
+  stopSpeaking();
 
   if (map && props.route) {
     map.fitBounds(L.latLngBounds(props.route.path), { padding: [32, 32] });
@@ -279,6 +281,14 @@ onMounted(() => {
 
   watch(() => props.route, renderRoute);
   watch([() => props.route, () => props.filters], refreshPoisAlongRoute, { deep: true });
+  // currentStep changes each time currentStepIndex advances to a new
+  // maneuver, so this fires exactly once per turn rather than on every
+  // GPS update.
+  watch(currentStep, (step) => {
+    if (step) {
+      speak(step.instruction);
+    }
+  });
   // A newly planned (or cleared) route invalidates whatever step we were
   // tracking toward, so stop rather than navigate against stale data.
   watch(
@@ -293,6 +303,7 @@ onMounted(() => {
 
 onUnmounted(() => {
   stopWatchingPosition?.();
+  stopSpeaking();
   map?.remove();
   map = null;
 });
