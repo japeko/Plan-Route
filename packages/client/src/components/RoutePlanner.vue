@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref } from "vue";
 import { geocodeAddressInFinland } from "@/services/geocoding.service";
-import { fetchRoadRoute } from "@/services/routing.service";
-import type { RoutePlan } from "@/types/route.types";
+import { fetchRoadTrip } from "@/services/routing.service";
+import type { GeocodedPoint, RoutePlan } from "@/types/route.types";
 
 const emit = defineEmits<{
   "route-planned": [route: RoutePlan];
@@ -15,6 +15,7 @@ const viaAddresses = ref<string[]>([]);
 const isPlanning = ref(false);
 const errorMessage = ref<string | null>(null);
 const summary = ref<{ distanceKm: string; durationMin: string } | null>(null);
+const wasReordered = ref(false);
 
 function addStop(): void {
   viaAddresses.value.push("");
@@ -37,19 +38,24 @@ async function planRoute(): Promise<void> {
 
   isPlanning.value = true;
   try {
-    const stops = await Promise.all(addresses.map((address) => geocodeAddressInFinland(address)));
-    const road = await fetchRoadRoute(stops.map((stop) => stop.position));
+    const geocoded = await Promise.all(addresses.map((address) => geocodeAddressInFinland(address)));
+    const trip = await fetchRoadTrip(geocoded.map((stop) => stop.position));
+
+    const orderedStops = trip.visitOrder
+      .map((originalIndex) => geocoded[originalIndex])
+      .filter((stop): stop is GeocodedPoint => stop !== undefined);
+    wasReordered.value = trip.visitOrder.some((originalIndex, position) => originalIndex !== position);
 
     summary.value = {
-      distanceKm: (road.distanceMeters / 1000).toFixed(1),
-      durationMin: Math.round(road.durationSeconds / 60).toString(),
+      distanceKm: (trip.distanceMeters / 1000).toFixed(1),
+      durationMin: Math.round(trip.durationSeconds / 60).toString(),
     };
 
     emit("route-planned", {
-      stops,
-      path: road.path,
-      distanceMeters: road.distanceMeters,
-      durationSeconds: road.durationSeconds,
+      stops: orderedStops,
+      path: trip.path,
+      distanceMeters: trip.distanceMeters,
+      durationSeconds: trip.durationSeconds,
     });
   } catch (err) {
     errorMessage.value = err instanceof Error ? err.message : "Failed to plan the route.";
@@ -64,6 +70,7 @@ function clearRoute(): void {
   viaAddresses.value = [];
   summary.value = null;
   errorMessage.value = null;
+  wasReordered.value = false;
   emit("route-cleared");
 }
 </script>
@@ -145,6 +152,12 @@ function clearRoute(): void {
       class="summary"
     >
       {{ summary.distanceKm }} km &middot; {{ summary.durationMin }} min
+    </p>
+    <p
+      v-if="wasReordered"
+      class="reorder-note"
+    >
+      Stops reordered for the shortest route.
     </p>
     <p
       v-if="errorMessage"
@@ -252,6 +265,12 @@ button:disabled {
   font-size: 0.85rem;
   color: #2f9e44;
   font-weight: 600;
+}
+
+.reorder-note {
+  font-size: 0.8rem;
+  color: #495057;
+  font-style: italic;
 }
 
 .error {
