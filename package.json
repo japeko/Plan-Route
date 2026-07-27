@@ -1,0 +1,18 @@
+{
+  "name": "first-claude-project",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@11.17.0",
+  "scripts": {
+    "dev": "pnpm -r --parallel --if-present run dev",
+    "build": "pnpm -r build",
+    "lint-fix": "pnpm -r lint-fix",
+    "seed": "pnpm --filter @poi/server seed"
+  },
+  "devDependencies": {
+    "eslint": "^9.14.0",
+    "eslint-plugin-vue": "^10.10.0",
+    "typescript-eslint": "^8.13.0",
+    "vue-eslint-parser": "^10.4.1"
+  }
+}
