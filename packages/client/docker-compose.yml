@@ -1,0 +1,23 @@
+services:
+  client:
+    build:
+      context: ../..
+      dockerfile: packages/client/Dockerfile
+    container_name: poi-client
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.client.rule=Host(`localhost`)
+      - traefik.http.routers.client.entrypoints=web
+      - traefik.http.services.client.loadbalancer.server.port=4173
+    networks:
+      - traefik
+    restart: unless-stopped
+
+networks:
+  # No Traefik instance is defined here — this attaches to a Traefik you
+  # run separately. Before `docker compose up`, both this network and a
+  # Traefik container with a "web" entrypoint must exist:
+  #   docker network create traefik
+  #   (then run your separate Traefik compose file on that same network)
+  traefik:
+    external: true
