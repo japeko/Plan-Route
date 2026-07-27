@@ -79,3 +79,46 @@ export function resolveCurrentStepIndex(
   }
   return startIndex;
 }
+
+// Index of whichever point on the route polyline the vehicle is
+// currently nearest to — the anchor for "what's ahead" while navigating.
+export function findNearestPathIndex(path: LatLngTuple[], position: LatLngTuple): number {
+  let nearestIndex = 0;
+  let nearestDistance = Infinity;
+
+  path.forEach((point, index) => {
+    const distance = distanceMeters(position, point);
+    if (distance < nearestDistance) {
+      nearestDistance = distance;
+      nearestIndex = index;
+    }
+  });
+
+  return nearestIndex;
+}
+
+// Walks forward along the route polyline from fromIndex, collecting
+// points until roughly maxDistanceMeters of road has accumulated (or the
+// route ends) — the actual upcoming road geometry to fit the map to,
+// rather than a generic radius that ignores how the road curves.
+export function sliceUpcomingPath(path: LatLngTuple[], fromIndex: number, maxDistanceMeters: number): LatLngTuple[] {
+  const start = path[fromIndex];
+  if (!start) {
+    return [];
+  }
+
+  const slice: LatLngTuple[] = [start];
+  let accumulated = 0;
+
+  for (let i = fromIndex + 1; i < path.length && accumulated < maxDistanceMeters; i += 1) {
+    const previous = path[i - 1];
+    const point = path[i];
+    if (!previous || !point) {
+      break;
+    }
+    accumulated += distanceMeters(previous, point);
+    slice.push(point);
+  }
+
+  return slice;
+}

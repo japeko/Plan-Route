@@ -10,6 +10,7 @@ import {
   FINLAND_CENTER,
   FINLAND_DEFAULT_ZOOM,
   FINLAND_MIN_ZOOM,
+  NAVIGATION_VIEW_DISTANCE_METERS,
   OSM_TILE_LAYER_ATTRIBUTION,
   OSM_TILE_LAYER_URL,
 } from "@/constants/map.constants";
@@ -17,7 +18,9 @@ import {
   GEOLOCATION_PERMISSION_DENIED,
   GeolocationError,
   distanceMeters,
+  findNearestPathIndex,
   resolveCurrentStepIndex,
+  sliceUpcomingPath,
   watchVehiclePosition,
 } from "@/services/navigation.service";
 import type { PoiFilterOptions, RoutePlan } from "@/types/route.types";
@@ -33,7 +36,12 @@ const vehiclePosition = ref<LatLngTuple | null>(null);
 const currentStepIndex = ref(0);
 const navError = ref<string | null>(null);
 
-const currentStep = computed(() => props.route?.steps[currentStepIndex.value] ?? null);
+// Gated on vehiclePosition, not just route: currentStepIndex defaults to 0,
+// so without this the banner would show step 0's instruction as soon as
+// navigation starts even if a real GPS fix never actually arrives.
+const currentStep = computed(() =>
+  vehiclePosition.value && props.route ? (props.route.steps[currentStepIndex.value] ?? null) : null,
+);
 const distanceToNextStep = computed(() =>
   vehiclePosition.value && currentStep.value ? distanceMeters(vehiclePosition.value, currentStep.value.location) : null,
 );
@@ -144,6 +152,21 @@ function vehicleIcon(): L.DivIcon {
   });
 }
 
+function centerOnUpcomingRoute(position: LatLngTuple): void {
+  if (!map || !props.route) {
+    return;
+  }
+  const nearestIndex = findNearestPathIndex(props.route.path, position);
+  // Anchor the view on the route itself (the nearest point on it), not the
+  // raw GPS position: if the device's actual location is far from the
+  // route — e.g. testing this Finland app from somewhere else entirely —
+  // fitBounds would otherwise have to stretch to cover both, zooming out
+  // instead of in. The vehicle marker still uses the real position.
+  const snappedPosition = props.route.path[nearestIndex] ?? position;
+  const upcoming = sliceUpcomingPath(props.route.path, nearestIndex, NAVIGATION_VIEW_DISTANCE_METERS);
+  map.fitBounds(L.latLngBounds([snappedPosition, ...upcoming]), { padding: [40, 40] });
+}
+
 function stopNavigation(): void {
   stopWatchingPosition?.();
   stopWatchingPosition = null;
@@ -152,6 +175,10 @@ function stopNavigation(): void {
   currentStepIndex.value = 0;
   vehicleMarker?.remove();
   vehicleMarker = null;
+
+  if (map && props.route) {
+    map.fitBounds(L.latLngBounds(props.route.path), { padding: [32, 32] });
+  }
 }
 
 function startNavigation(): void {
@@ -175,6 +202,8 @@ function startNavigation(): void {
       if (props.route) {
         currentStepIndex.value = resolveCurrentStepIndex(props.route.steps, position, currentStepIndex.value);
       }
+
+      centerOnUpcomingRoute(position);
     },
     (error: GeolocationError) => {
       navError.value = error.message;
@@ -330,6 +359,12 @@ onUnmounted(() => {
         class="nav-distance"
       >{{ formatDistance(distanceToNextStep) }}</span>
     </div>
+    <div
+      v-else-if="isNavigating && !navError"
+      class="nav-banner nav-waiting"
+    >
+      Waiting for location… (check your browser's location permission prompt)
+    </div>
     <p
       v-if="navError"
       class="map-error nav-error"
@@ -475,6 +510,12 @@ onUnmounted(() => {
   flex-shrink: 0;
   font-size: 0.85rem;
   color: #ffc9c9;
+}
+
+.nav-waiting {
+  background: #495057;
+  font-size: 0.85rem;
+  font-weight: 500;
 }
 
 .nav-error {
