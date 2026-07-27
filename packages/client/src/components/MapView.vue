@@ -84,7 +84,10 @@ async function refreshPoisAlongRoute(): Promise<void> {
     poiLayer.clearLayers();
     for (const poi of pois) {
       const [lng, lat] = poi.location.coordinates;
-      L.marker([lat, lng], { icon: poiMarkerIcon(poi) }).bindPopup(poiPopupHtml(poi)).addTo(poiLayer);
+      L.marker([lat, lng], { icon: poiMarkerIcon(poi) })
+        .bindTooltip(poi.name, { direction: "top", offset: [0, -10] })
+        .bindPopup(poiPopupHtml(poi))
+        .addTo(poiLayer);
     }
     errorMessage.value = null;
   } catch {
