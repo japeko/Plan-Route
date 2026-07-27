@@ -11,9 +11,18 @@ const emit = defineEmits<{
 
 const startAddress = ref("");
 const endAddress = ref("");
+const viaAddresses = ref<string[]>([]);
 const isPlanning = ref(false);
 const errorMessage = ref<string | null>(null);
 const summary = ref<{ distanceKm: string; durationMin: string } | null>(null);
+
+function addStop(): void {
+  viaAddresses.value.push("");
+}
+
+function removeStop(index: number): void {
+  viaAddresses.value.splice(index, 1);
+}
 
 async function planRoute(): Promise<void> {
   errorMessage.value = null;
@@ -23,14 +32,13 @@ async function planRoute(): Promise<void> {
     return;
   }
 
+  const viaEntries = viaAddresses.value.map((address) => address.trim()).filter((address) => address.length > 0);
+  const addresses = [startAddress.value, ...viaEntries, endAddress.value];
+
   isPlanning.value = true;
   try {
-    const [start, end] = await Promise.all([
-      geocodeAddressInFinland(startAddress.value),
-      geocodeAddressInFinland(endAddress.value),
-    ]);
-
-    const road = await fetchRoadRoute(start.position, end.position);
+    const stops = await Promise.all(addresses.map((address) => geocodeAddressInFinland(address)));
+    const road = await fetchRoadRoute(stops.map((stop) => stop.position));
 
     summary.value = {
       distanceKm: (road.distanceMeters / 1000).toFixed(1),
@@ -38,8 +46,7 @@ async function planRoute(): Promise<void> {
     };
 
     emit("route-planned", {
-      start,
-      end,
+      stops,
       path: road.path,
       distanceMeters: road.distanceMeters,
       durationSeconds: road.durationSeconds,
@@ -54,6 +61,7 @@ async function planRoute(): Promise<void> {
 function clearRoute(): void {
   startAddress.value = "";
   endAddress.value = "";
+  viaAddresses.value = [];
   summary.value = null;
   errorMessage.value = null;
   emit("route-cleared");
@@ -74,6 +82,39 @@ function clearRoute(): void {
         placeholder="e.g. Mannerheimintie 1, Helsinki"
       >
     </div>
+
+    <div
+      v-for="(_, index) in viaAddresses"
+      :key="index"
+      class="field via-field"
+    >
+      <label :for="`via-address-${index}`">Pass by</label>
+      <div class="via-row">
+        <input
+          :id="`via-address-${index}`"
+          v-model="viaAddresses[index]"
+          type="text"
+          placeholder="e.g. Hämeenlinna"
+        >
+        <button
+          type="button"
+          class="remove-stop"
+          title="Remove stop"
+          @click="removeStop(index)"
+        >
+          &times;
+        </button>
+      </div>
+    </div>
+
+    <button
+      type="button"
+      class="add-stop"
+      @click="addStop"
+    >
+      + Add stop
+    </button>
+
     <div class="field">
       <label for="end-address">End address</label>
       <input
@@ -83,6 +124,7 @@ function clearRoute(): void {
         placeholder="e.g. Hämeenkatu 1, Tampere"
       >
     </div>
+
     <div class="actions">
       <button
         type="submit"
@@ -143,12 +185,45 @@ input {
   font-size: 0.9rem;
 }
 
+.via-row {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.via-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.remove-stop {
+  flex-shrink: 0;
+  width: 2rem;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  background: #f8f9fa;
+  color: #495057;
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.add-stop {
+  align-self: flex-start;
+  padding: 0.3rem 0.6rem;
+  border: 1px dashed #adb5bd;
+  border-radius: 4px;
+  background: none;
+  color: #495057;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
 .actions {
   display: flex;
   gap: 0.5rem;
 }
 
-button {
+button[type="submit"] {
   padding: 0.5rem 1rem;
   border: none;
   border-radius: 4px;
@@ -158,9 +233,14 @@ button {
   cursor: pointer;
 }
 
-button[type="button"] {
+.actions button[type="button"] {
+  padding: 0.5rem 1rem;
+  border: none;
+  border-radius: 4px;
   background: #e9ecef;
   color: #495057;
+  font-size: 0.9rem;
+  cursor: pointer;
 }
 
 button:disabled {

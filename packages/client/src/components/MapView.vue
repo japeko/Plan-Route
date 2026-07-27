@@ -105,18 +105,40 @@ function startEndIcon(kind: "start" | "end"): L.DivIcon {
   });
 }
 
+function viaIcon(stopNumber: number): L.DivIcon {
+  return L.divIcon({
+    className: "route-via-marker",
+    html: `<span>${stopNumber}</span>`,
+    iconSize: [22, 22],
+    iconAnchor: [11, 11],
+  });
+}
+
 function renderRoute(route: RoutePlan | null): void {
   if (!map || !routeLayer) {
     return;
   }
-  routeLayer.clearLayers();
+  const layer = routeLayer;
+  layer.clearLayers();
   if (!route) {
     return;
   }
 
-  L.polyline(route.path, { color: "#1c7ed6", weight: 5, opacity: 0.85 }).addTo(routeLayer);
-  L.marker(route.start.position, { icon: startEndIcon("start") }).bindPopup(`Start: ${route.start.label}`).addTo(routeLayer);
-  L.marker(route.end.position, { icon: startEndIcon("end") }).bindPopup(`End: ${route.end.label}`).addTo(routeLayer);
+  const [start, ...rest] = route.stops;
+  const end = rest.pop();
+  const viaStops = rest;
+
+  L.polyline(route.path, { color: "#1c7ed6", weight: 5, opacity: 0.85 }).addTo(layer);
+
+  if (start) {
+    L.marker(start.position, { icon: startEndIcon("start") }).bindPopup(`Start: ${start.label}`).addTo(layer);
+  }
+  viaStops.forEach((stop, index) => {
+    L.marker(stop.position, { icon: viaIcon(index + 1) }).bindPopup(`Stop ${index + 1}: ${stop.label}`).addTo(layer);
+  });
+  if (end) {
+    L.marker(end.position, { icon: startEndIcon("end") }).bindPopup(`End: ${end.label}`).addTo(layer);
+  }
 
   map.fitBounds(L.latLngBounds(route.path), { padding: [32, 32] });
 }
@@ -206,6 +228,21 @@ onUnmounted(() => {
   border-style: solid;
   border-color: white;
   box-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
+}
+
+.route-via-marker span {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: #1c7ed6;
+  border: 2px solid white;
+  box-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
+  color: white;
+  font-size: 0.7rem;
+  font-weight: 700;
 }
 </style>
 

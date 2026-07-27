@@ -7,8 +7,8 @@ export interface GeocodedPoint {
 }
 
 export interface RoutePlan {
-  start: GeocodedPoint;
-  end: GeocodedPoint;
+  // Ordered start -> via stops -> end, in the sequence the route visits them.
+  stops: GeocodedPoint[];
   path: LatLngTuple[];
   distanceMeters: number;
   durationSeconds: number;

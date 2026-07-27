@@ -20,8 +20,12 @@ export interface RoadRoute {
   durationSeconds: number;
 }
 
-export async function fetchRoadRoute(start: LatLngTuple, end: LatLngTuple): Promise<RoadRoute> {
-  const coordinates = `${start[1]},${start[0]};${end[1]},${end[0]}`;
+export async function fetchRoadRoute(stops: LatLngTuple[]): Promise<RoadRoute> {
+  if (stops.length < 2) {
+    throw new RoutingError("At least a start and an end location are required.");
+  }
+
+  const coordinates = stops.map(([lat, lng]) => `${lng},${lat}`).join(";");
   const params = new URLSearchParams({ overview: "full", geometries: "geojson" });
 
   const response = await fetch(`${OSRM_ROUTE_BASE_URL}/${coordinates}?${params.toString()}`);
@@ -34,7 +38,7 @@ export async function fetchRoadRoute(start: LatLngTuple, end: LatLngTuple): Prom
   const route = data.routes[0];
 
   if (data.code !== "Ok" || !route) {
-    throw new RoutingError("No road route could be found between the two locations.");
+    throw new RoutingError("No road route could be found through the given locations.");
   }
 
   return {
