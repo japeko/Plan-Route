@@ -1,5 +1,5 @@
 {
-  "name": "first-claude-project",
+  "name": "plan-route",
   "private": true,
   "type": "module",
   "packageManager": "pnpm@11.17.0",
@@ -7,7 +7,8 @@
     "dev": "pnpm -r --parallel --if-present run dev",
     "build": "pnpm -r build",
     "lint-fix": "pnpm -r lint-fix",
-    "seed": "pnpm --filter @poi/server seed"
+    "seed": "pnpm --filter @poi/server seed",
+    "release": "bash scripts/release-images.sh"
   },
   "devDependencies": {
     "eslint": "^9.14.0",

@@ -1,0 +1,52 @@
+services:
+  traefik:
+    image: traefik:v3.2
+    container_name: poi-traefik
+    command:
+      - --providers.docker=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.web.address=:80
+      - --entrypoints.web.http.redirections.entrypoint.to=websecure
+      - --entrypoints.web.http.redirections.entrypoint.scheme=https
+      - --entrypoints.websecure.address=:443
+      - --certificatesresolvers.letsencrypt.acme.tlschallenge=true
+      - --certificatesresolvers.letsencrypt.acme.email=${ACME_EMAIL}
+      - --certificatesresolvers.letsencrypt.acme.storage=/letsencrypt/acme.json
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - letsencrypt:/letsencrypt
+    restart: unless-stopped
+
+  client:
+    image: ghcr.io/${GITHUB_OWNER}/poi-client:${IMAGE_TAG:-latest}
+    container_name: poi-client
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.client.rule=Host(`${DOMAIN}`)
+      - traefik.http.routers.client.entrypoints=websecure
+      - traefik.http.routers.client.tls.certresolver=letsencrypt
+      - traefik.http.services.client.loadbalancer.server.port=4173
+    restart: unless-stopped
+
+  server:
+    image: ghcr.io/${GITHUB_OWNER}/poi-server:${IMAGE_TAG:-latest}
+    container_name: poi-server
+    environment:
+      MONGODB_URI: ${MONGODB_URI}
+      PORT: "3000"
+      CLIENT_ORIGIN: https://${DOMAIN}
+    labels:
+      - traefik.enable=true
+      # More specific than the client's plain Host rule, so /api requests
+      # go here and everything else goes to the client.
+      - traefik.http.routers.server.rule=Host(`${DOMAIN}`) && PathPrefix(`/api`)
+      - traefik.http.routers.server.entrypoints=websecure
+      - traefik.http.routers.server.tls.certresolver=letsencrypt
+      - traefik.http.services.server.loadbalancer.server.port=3000
+    restart: unless-stopped
+
+volumes:
+  letsencrypt:
