@@ -10,6 +10,9 @@ export interface NavigationStep {
   instruction: string;
   distanceMeters: number;
   durationSeconds: number;
+  // Where this maneuver happens, so live navigation can tell how far the
+  // vehicle is from it.
+  location: LatLngTuple;
 }
 
 export interface RoutePlan {

@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import L from "leaflet";
+import type { LatLngTuple } from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, onMounted, onUnmounted, ref, watch } from "vue";
 import type { GasStationPoi, GeoLineString, PointOfInterest } from "@poi/shared";
 import { fetchPoisAlongRoute } from "@/api/poi.api";
 import {
@@ -12,16 +13,36 @@ import {
   OSM_TILE_LAYER_ATTRIBUTION,
   OSM_TILE_LAYER_URL,
 } from "@/constants/map.constants";
+import {
+  GEOLOCATION_PERMISSION_DENIED,
+  GeolocationError,
+  distanceMeters,
+  resolveCurrentStepIndex,
+  watchVehiclePosition,
+} from "@/services/navigation.service";
 import type { PoiFilterOptions, RoutePlan } from "@/types/route.types";
+import { formatDistance } from "@/utils/format";
 
 const props = defineProps<{ route: RoutePlan | null; filters: PoiFilterOptions }>();
 
 const mapContainer = ref<HTMLDivElement | null>(null);
 const errorMessage = ref<string | null>(null);
 
+const isNavigating = ref(false);
+const vehiclePosition = ref<LatLngTuple | null>(null);
+const currentStepIndex = ref(0);
+const navError = ref<string | null>(null);
+
+const currentStep = computed(() => props.route?.steps[currentStepIndex.value] ?? null);
+const distanceToNextStep = computed(() =>
+  vehiclePosition.value && currentStep.value ? distanceMeters(vehiclePosition.value, currentStep.value.location) : null,
+);
+
 let map: L.Map | null = null;
 let poiLayer: L.LayerGroup | null = null;
 let routeLayer: L.LayerGroup | null = null;
+let vehicleMarker: L.Marker | null = null;
+let stopWatchingPosition: (() => void) | null = null;
 
 function stationFillColor(poi: GasStationPoi): string {
   if (poi.hasGasoline && poi.hasElectricCharging) {
@@ -114,6 +135,71 @@ function viaIcon(stopNumber: number): L.DivIcon {
   });
 }
 
+function vehicleIcon(): L.DivIcon {
+  return L.divIcon({
+    className: "vehicle-marker",
+    html: `<span></span>`,
+    iconSize: [18, 18],
+    iconAnchor: [9, 9],
+  });
+}
+
+function stopNavigation(): void {
+  stopWatchingPosition?.();
+  stopWatchingPosition = null;
+  isNavigating.value = false;
+  vehiclePosition.value = null;
+  currentStepIndex.value = 0;
+  vehicleMarker?.remove();
+  vehicleMarker = null;
+}
+
+function startNavigation(): void {
+  if (!props.route || !map) {
+    return;
+  }
+  navError.value = null;
+  currentStepIndex.value = 0;
+
+  stopWatchingPosition = watchVehiclePosition(
+    (position) => {
+      navError.value = null;
+      vehiclePosition.value = position;
+
+      if (!vehicleMarker && map) {
+        vehicleMarker = L.marker(position, { icon: vehicleIcon(), zIndexOffset: 1000 }).addTo(map);
+      } else {
+        vehicleMarker?.setLatLng(position);
+      }
+
+      if (props.route) {
+        currentStepIndex.value = resolveCurrentStepIndex(props.route.steps, position, currentStepIndex.value);
+      }
+    },
+    (error: GeolocationError) => {
+      navError.value = error.message;
+      // Permission denial is terminal — nothing will succeed until the
+      // user changes it, so stop cleanly. Other errors (timeout,
+      // position temporarily unavailable) are transient; watchPosition
+      // keeps calling back on its own, so just surface the warning and
+      // keep tracking rather than dropping the session.
+      if (error.code === GEOLOCATION_PERMISSION_DENIED) {
+        stopNavigation();
+      }
+    },
+  );
+
+  isNavigating.value = true;
+}
+
+function toggleNavigation(): void {
+  if (isNavigating.value) {
+    stopNavigation();
+  } else {
+    startNavigation();
+  }
+}
+
 function renderRoute(route: RoutePlan | null): void {
   if (!map || !routeLayer) {
     return;
@@ -164,9 +250,20 @@ onMounted(() => {
 
   watch(() => props.route, renderRoute);
   watch([() => props.route, () => props.filters], refreshPoisAlongRoute, { deep: true });
+  // A newly planned (or cleared) route invalidates whatever step we were
+  // tracking toward, so stop rather than navigate against stale data.
+  watch(
+    () => props.route,
+    () => {
+      if (isNavigating.value) {
+        stopNavigation();
+      }
+    },
+  );
 });
 
 onUnmounted(() => {
+  stopWatchingPosition?.();
   map?.remove();
   map = null;
 });
@@ -214,6 +311,31 @@ onUnmounted(() => {
     >
       {{ errorMessage }}
     </p>
+
+    <button
+      v-if="route"
+      type="button"
+      class="nav-toggle"
+      @click="toggleNavigation"
+    >
+      {{ isNavigating ? "Stop navigation" : "Start navigation" }}
+    </button>
+    <div
+      v-if="isNavigating && currentStep"
+      class="nav-banner"
+    >
+      <span class="nav-instruction">{{ currentStep.instruction }}</span>
+      <span
+        v-if="distanceToNextStep !== null"
+        class="nav-distance"
+      >{{ formatDistance(distanceToNextStep) }}</span>
+    </div>
+    <p
+      v-if="navError"
+      class="map-error nav-error"
+    >
+      {{ navError }}
+    </p>
   </div>
 </template>
 
@@ -243,6 +365,16 @@ onUnmounted(() => {
   color: white;
   font-size: 0.7rem;
   font-weight: 700;
+}
+
+.vehicle-marker span {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  background: #e64980;
+  border: 3px solid white;
+  box-shadow: 0 0 0 2px #e64980, 0 1px 4px rgba(0, 0, 0, 0.5);
 }
 </style>
 
@@ -296,5 +428,56 @@ onUnmounted(() => {
 .dot.ring {
   background: white;
   border: 2px solid #f59f00;
+}
+
+.nav-toggle {
+  position: absolute;
+  top: 0.5rem;
+  right: 0.5rem;
+  z-index: 1000;
+  padding: 0.5rem 0.9rem;
+  border: none;
+  border-radius: 6px;
+  background: #e64980;
+  color: white;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.nav-banner {
+  position: absolute;
+  top: 0.5rem;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 1000;
+  background: #212529;
+  color: white;
+  padding: 0.6rem 1.2rem;
+  border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+  display: flex;
+  align-items: baseline;
+  gap: 0.6rem;
+  max-width: min(80%, 480px);
+}
+
+.nav-instruction {
+  font-size: 0.95rem;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-distance {
+  flex-shrink: 0;
+  font-size: 0.85rem;
+  color: #ffc9c9;
+}
+
+.nav-error {
+  top: 3.5rem;
 }
 </style>

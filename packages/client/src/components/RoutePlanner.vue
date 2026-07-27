@@ -3,6 +3,7 @@ import { ref } from "vue";
 import { geocodeAddressInFinland } from "@/services/geocoding.service";
 import { fetchRoadTrip } from "@/services/routing.service";
 import type { GeocodedPoint, NavigationStep, RoutePlan } from "@/types/route.types";
+import { formatDistance } from "@/utils/format";
 
 const emit = defineEmits<{
   "route-planned": [route: RoutePlan];
@@ -25,10 +26,6 @@ function addStop(): void {
 
 function removeStop(index: number): void {
   viaAddresses.value.splice(index, 1);
-}
-
-function formatDistance(distanceMeters: number): string {
-  return distanceMeters >= 1000 ? `${(distanceMeters / 1000).toFixed(1)} km` : `${Math.round(distanceMeters)} m`;
 }
 
 async function planRoute(): Promise<void> {

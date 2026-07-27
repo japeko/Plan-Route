@@ -7,6 +7,7 @@ export class RoutingError extends Error {}
 interface OsrmManeuver {
   type: string;
   modifier?: string;
+  location: [number, number];
 }
 
 interface OsrmStep {
@@ -130,6 +131,7 @@ export async function fetchRoadTrip(stops: LatLngTuple[]): Promise<RoadTrip> {
       instruction: describeStep(step),
       distanceMeters: step.distance,
       durationSeconds: step.duration,
+      location: [step.maneuver.location[1], step.maneuver.location[0]] as LatLngTuple,
     })),
   );
 
