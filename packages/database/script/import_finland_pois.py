@@ -264,6 +264,12 @@ def import_pois(mongodb_uri: str) -> None:
 
     print("Merging co-located fuel/charging points into stations and checking for attached restaurants...")
     stations = merge_fuel_and_charging(fuel_elements, charging_elements, restaurant_elements)
+
+    excluded_count = sum(1 for s in stations if "teboil" in s.name.lower())
+    stations = [s for s in stations if "teboil" not in s.name.lower()]
+    if excluded_count:
+        print(f"Excluding {excluded_count} Teboil station(s).")
+
     both_count = sum(1 for s in stations if s.has_gasoline and s.has_electric_charging)
     print(
         f"Built {len(stations)} gas stations ({both_count} offer both gasoline and electric charging)."
