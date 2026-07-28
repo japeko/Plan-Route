@@ -9,11 +9,21 @@
 # [tag] defaults to the current git commit short hash. Images are always
 # also tagged "latest".
 #
+# Images are built for linux/amd64 (what the Hetzner/cloud host runs),
+# regardless of the architecture of the machine running this script — e.g.
+# building on an Apple Silicon Mac still produces an amd64 image via
+# docker buildx, and --push uploads it directly (buildx can't --load a
+# non-native-arch image into the local docker daemon).
+#
 # One-time setup before running this:
 #   1. Create a GitHub Personal Access Token (classic) with the
 #      write:packages scope: https://github.com/settings/tokens
 #   2. docker login ghcr.io -u <your-github-username>
 #      (paste the token as the password when prompted)
+#   3. A buildx builder that supports linux/amd64 (Docker Desktop's default
+#      builder does via QEMU emulation). If `docker buildx build` errors
+#      about an unsupported platform, run:
+#        docker buildx create --use
 
 set -euo pipefail
 
@@ -34,12 +44,14 @@ build_and_push() {
   local dockerfile="$2"
   local image="${REGISTRY}/${name}"
 
-  echo "==> Building ${image}:${TAG}"
-  docker build -f "$dockerfile" -t "${image}:${TAG}" -t "${image}:latest" .
-
-  echo "==> Pushing ${image}:${TAG} and :latest"
-  docker push "${image}:${TAG}"
-  docker push "${image}:latest"
+  echo "==> Building and pushing ${image}:${TAG} (linux/amd64)"
+  docker buildx build \
+    --platform linux/amd64 \
+    -f "$dockerfile" \
+    -t "${image}:${TAG}" \
+    -t "${image}:latest" \
+    --push \
+    .
 }
 
 build_and_push poi-client packages/client/Dockerfile
