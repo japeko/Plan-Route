@@ -17,4 +17,7 @@ export default defineConfig({
       },
     },
   },
+  preview: {
+    allowedHosts: process.env.PREVIEW_ALLOWED_HOST ? [process.env.PREVIEW_ALLOWED_HOST] : undefined,
+  },
 });

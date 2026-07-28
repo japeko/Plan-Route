@@ -4,8 +4,9 @@ The client and server ship as Docker images ("distribution packets") built from
 `packages/client/Dockerfile` and `packages/server/Dockerfile`, pushed to GitHub
 Container Registry (ghcr.io), and pulled down on whatever cloud host runs them.
 Mongo runs on the same host as its own container (see `mongo` in
-`docker-compose.yml`), with its data in a named volume — the host never needs
-this source repo, only this `deploy/` folder.
+`docker-compose.yml`), with its data in a named volume, and mongo-express
+gives you a web UI to browse it at `https://<DOMAIN>/db/` — the host never
+needs this source repo, only this `deploy/` folder.
 
 ## 1. One-time setup
 
@@ -19,8 +20,13 @@ this source repo, only this `deploy/` folder.
   ```
 - A cloud VM (DigitalOcean, Hetzner, AWS Lightsail, etc.) with Docker and the
   Docker Compose plugin installed. Only ports 22, 80, and 443 need to be open
-  — Mongo has no published port, so it's reachable only from the `server`
-  container over the compose network, not from the internet.
+  — Mongo itself has no published port, so it's reachable only from the
+  `server` and `mongo-express` containers over the compose network, never
+  directly from the internet. mongo-express *is* internet-facing (behind
+  Traefik at `/db/`), which is why Mongo now requires auth
+  (`MONGO_ROOT_USERNAME`/`MONGO_ROOT_PASSWORD`) and mongo-express itself is
+  behind its own basic-auth login (`MONGO_EXPRESS_USERNAME`/`PASSWORD`) —
+  set real values for all four in `.env`, not the placeholders.
 - A domain name pointed (A record) at the VM's IP address — required for
   Traefik to obtain a Let's Encrypt TLS certificate.
 
@@ -51,7 +57,8 @@ On the host:
 ```bash
 cd ~/poi-app
 cp .env.example .env
-# edit .env: GITHUB_OWNER, DOMAIN, ACME_EMAIL, MONGODB_URI
+# edit .env: GITHUB_OWNER, DOMAIN, ACME_EMAIL, MONGO_ROOT_USERNAME,
+# MONGO_ROOT_PASSWORD, MONGO_EXPRESS_USERNAME, MONGO_EXPRESS_PASSWORD
 docker login ghcr.io -u <your-github-username>   # paste a read:packages token
 docker compose pull
 docker compose up -d
@@ -59,7 +66,8 @@ docker compose up -d
 
 Traefik will request a TLS certificate for `DOMAIN` automatically on first
 request. The client is served at `https://<DOMAIN>/`, the API at
-`https://<DOMAIN>/api/*`.
+`https://<DOMAIN>/api/*`, and the Mongo admin UI at `https://<DOMAIN>/db/`
+(prompts for `MONGO_EXPRESS_USERNAME`/`PASSWORD`).
 
 ## 4. Shipping an update
 
@@ -79,22 +87,23 @@ to the git commit hash printed by `pnpm release`.
 
 ## 5. Populating Mongo on the host
 
-This stack's `mongo` container starts empty. Run the OSM importer from
-`packages/database/script` against it once, from your dev machine (or
-anywhere with network access to the host):
+This stack's `mongo` container starts empty. Easiest: browse to
+`https://<DOMAIN>/db/` and add documents by hand for a quick check, or run
+the OSM importer from `packages/database/script` against it once. Since
+`mongo` isn't published on a host port, copy the importer image/script onto
+the host and run it there against `mongo:27017` on the compose network:
 
 ```bash
-docker build -t poi-importer packages/database/script
-docker run --rm \
-  -e MONGODB_URI="mongodb://<your-user>@<hetzner-ip>:27017/poi" \
+# on the host, inside ~/poi-app
+docker build -t poi-importer packages/database/script   # after copying that folder over too
+docker run --rm --network poi-app_default \
+  -e MONGODB_URI="mongodb://${MONGO_ROOT_USERNAME}:${MONGO_ROOT_PASSWORD}@mongo:27017/poi?authSource=admin" \
   poi-importer
 ```
 
-Since `mongo` isn't published on a host port in `deploy/docker-compose.yml`,
-either temporarily add `ports: ["27017:27017"]` to run this remotely, or
-simpler — copy the importer image/script onto the host and run it there
-against `mongo:27017` on the compose network directly, then remove the
-temporary port mapping.
+(`poi-app_default` is the compose project's default network — check the
+actual name with `docker network ls` if your `deploy/` folder is named
+differently on the host.)
 
 ## 6. Backups
 
@@ -104,7 +113,9 @@ provides:
 
 ```bash
 # on the host
-docker exec poi-mongo mongodump --archive=/data/db/backup.archive --db=poi
+docker exec poi-mongo mongodump \
+  -u "$MONGO_ROOT_USERNAME" -p "$MONGO_ROOT_PASSWORD" --authenticationDatabase=admin \
+  --archive=/data/db/backup.archive --db=poi
 docker cp poi-mongo:/data/db/backup.archive ./poi-backup-$(date +%F).archive
 ```
 
