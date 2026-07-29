@@ -6,10 +6,16 @@ export interface GeocodedPoint {
   position: LatLngTuple;
 }
 
+// The only languages instructions are translated into — matches the
+// languages selectable in the voice picker (English, plus Finland's two
+// official languages).
+export type NavigationLanguage = "en" | "fi" | "sv";
+
 export interface NavigationStep {
-  // Full sentence ("Turn left onto Main Street") — used for the spoken
-  // voice instruction, where the verb phrase matters.
-  instruction: string;
+  // Full sentence ("Turn left onto Main Street"), one per supported
+  // navigation language — used for the spoken voice instruction, which
+  // needs to match whatever language the selected voice speaks.
+  instructions: Record<NavigationLanguage, string>;
   // Arrow glyph for the maneuver (e.g. "←" for a left turn), so the
   // on-screen banner can show direction without spelling it out — there's
   // rarely enough width on a phone screen for both the full instruction

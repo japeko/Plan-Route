@@ -23,7 +23,7 @@ import {
   sliceUpcomingPath,
   watchVehiclePosition,
 } from "@/services/navigation.service";
-import { speak, stopSpeaking } from "@/services/speech.service";
+import { currentLanguage, speak, stopSpeaking } from "@/services/speech.service";
 import type { PoiFilterOptions, RoutePlan } from "@/types/route.types";
 import { formatDistance } from "@/utils/format";
 
@@ -312,7 +312,7 @@ onMounted(() => {
   // GPS update.
   watch(currentStep, (step) => {
     if (step) {
-      speak(step.instruction);
+      speak(step.instructions[currentLanguage.value]);
     }
   });
   // A newly planned (or cleared) route invalidates whatever step we were

@@ -1,6 +1,8 @@
 import type { LatLngTuple } from "leaflet";
 import { OSRM_TRIP_BASE_URL } from "@/constants/api.constants";
-import type { NavigationStep } from "@/types/route.types";
+import type { NavigationLanguage, NavigationStep } from "@/types/route.types";
+
+const NAVIGATION_LANGUAGES: NavigationLanguage[] = ["en", "fi", "sv"];
 
 export class RoutingError extends Error {}
 
@@ -51,15 +53,37 @@ export interface RoadTrip {
   legs: NavigationStep[][];
 }
 
-const TURN_PHRASES: Record<string, string> = {
-  uturn: "Make a U-turn",
-  "sharp right": "Turn sharp right",
-  right: "Turn right",
-  "slight right": "Turn slightly right",
-  straight: "Continue straight",
-  "slight left": "Turn slightly left",
-  left: "Turn left",
-  "sharp left": "Turn sharp left",
+const TURN_PHRASES: Record<NavigationLanguage, Record<string, string>> = {
+  en: {
+    uturn: "Make a U-turn",
+    "sharp right": "Turn sharp right",
+    right: "Turn right",
+    "slight right": "Turn slightly right",
+    straight: "Continue straight",
+    "slight left": "Turn slightly left",
+    left: "Turn left",
+    "sharp left": "Turn sharp left",
+  },
+  fi: {
+    uturn: "Tee U-käännös",
+    "sharp right": "Käänny jyrkästi oikealle",
+    right: "Käänny oikealle",
+    "slight right": "Käänny loivasti oikealle",
+    straight: "Jatka suoraan",
+    "slight left": "Käänny loivasti vasemmalle",
+    left: "Käänny vasemmalle",
+    "sharp left": "Käänny jyrkästi vasemmalle",
+  },
+  sv: {
+    uturn: "Gör en U-sväng",
+    "sharp right": "Sväng skarpt höger",
+    right: "Sväng höger",
+    "slight right": "Sväng lätt höger",
+    straight: "Fortsätt rakt fram",
+    "slight left": "Sväng lätt vänster",
+    left: "Sväng vänster",
+    "sharp left": "Sväng skarpt vänster",
+  },
 };
 
 // Arrow glyphs for the on-screen banner, keyed the same way as
@@ -76,35 +100,98 @@ const TURN_ARROWS: Record<string, string> = {
   "sharp left": "↙",
 };
 
-function describeStep(step: OsrmStep): string {
-  const road = step.name || "the road";
+function describeStep(step: OsrmStep, lang: NavigationLanguage): string {
+  const road = step.name || (lang === "en" ? "the road" : lang === "fi" ? "tielle" : "vägen");
   const { type, modifier } = step.maneuver;
+  const turnPhrase = (modifier && TURN_PHRASES[lang][modifier]) || TURN_PHRASES[lang].straight;
 
-  switch (type) {
-    case "depart":
-      return `Head out on ${road}`;
-    case "arrive":
-      return "Arrive at your destination";
-    case "merge":
-      return `Merge onto ${road}`;
-    case "on ramp":
-      return `Take the ramp onto ${road}`;
-    case "off ramp":
-      return `Take the exit onto ${road}`;
-    case "fork":
-    case "end of road":
-    case "turn":
-      return `${(modifier && TURN_PHRASES[modifier]) || "Turn"} onto ${road}`;
-    case "roundabout":
-    case "rotary":
-    case "roundabout turn":
-      return `At the roundabout, continue onto ${road}`;
-    case "exit roundabout":
-    case "exit rotary":
-      return `Exit the roundabout onto ${road}`;
+  switch (lang) {
+    case "fi":
+      switch (type) {
+        case "depart":
+          return `Aja tielle ${road}`;
+        case "arrive":
+          return "Olet perillä";
+        case "merge":
+          return `Liity tielle ${road}`;
+        case "on ramp":
+          return `Aja rampille tielle ${road}`;
+        case "off ramp":
+          return `Poistu rampilta tielle ${road}`;
+        case "fork":
+        case "end of road":
+        case "turn":
+          return `${turnPhrase} tielle ${road}`;
+        case "roundabout":
+        case "rotary":
+        case "roundabout turn":
+          return `Jatka liikenneympyrässä tielle ${road}`;
+        case "exit roundabout":
+        case "exit rotary":
+          return `Poistu liikenneympyrästä tielle ${road}`;
+        default:
+          return `Jatka tietä ${road}`;
+      }
+    case "sv":
+      switch (type) {
+        case "depart":
+          return `Kör ut på ${road}`;
+        case "arrive":
+          return "Du har anlänt";
+        case "merge":
+          return `Anslut till ${road}`;
+        case "on ramp":
+          return `Kör upp på påfarten mot ${road}`;
+        case "off ramp":
+          return `Kör av mot ${road}`;
+        case "fork":
+        case "end of road":
+        case "turn":
+          return `${turnPhrase} in på ${road}`;
+        case "roundabout":
+        case "rotary":
+        case "roundabout turn":
+          return `Fortsätt i rondellen mot ${road}`;
+        case "exit roundabout":
+        case "exit rotary":
+          return `Kör ut ur rondellen mot ${road}`;
+        default:
+          return `Fortsätt på ${road}`;
+      }
     default:
-      return `Continue onto ${road}`;
+      switch (type) {
+        case "depart":
+          return `Head out on ${road}`;
+        case "arrive":
+          return "Arrive at your destination";
+        case "merge":
+          return `Merge onto ${road}`;
+        case "on ramp":
+          return `Take the ramp onto ${road}`;
+        case "off ramp":
+          return `Take the exit onto ${road}`;
+        case "fork":
+        case "end of road":
+        case "turn":
+          return `${turnPhrase} onto ${road}`;
+        case "roundabout":
+        case "rotary":
+        case "roundabout turn":
+          return `At the roundabout, continue onto ${road}`;
+        case "exit roundabout":
+        case "exit rotary":
+          return `Exit the roundabout onto ${road}`;
+        default:
+          return `Continue onto ${road}`;
+      }
   }
+}
+
+function describeStepAllLanguages(step: OsrmStep): Record<NavigationLanguage, string> {
+  return Object.fromEntries(NAVIGATION_LANGUAGES.map((lang) => [lang, describeStep(step, lang)])) as Record<
+    NavigationLanguage,
+    string
+  >;
 }
 
 function maneuverArrow(maneuver: OsrmManeuver): string {
@@ -166,7 +253,7 @@ export async function fetchRoadTrip(stops: LatLngTuple[]): Promise<RoadTrip> {
 
   const legs = trip.legs.map((leg) =>
     leg.steps.map((step) => ({
-      instruction: describeStep(step),
+      instructions: describeStepAllLanguages(step),
       arrow: maneuverArrow(step.maneuver),
       roadLabel: roadLabel(step),
       distanceMeters: step.distance,

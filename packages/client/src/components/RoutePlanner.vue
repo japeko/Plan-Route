@@ -2,6 +2,7 @@
 import { ref } from "vue";
 import { geocodeAddressInFinland } from "@/services/geocoding.service";
 import { fetchRoadTrip } from "@/services/routing.service";
+import { currentLanguage } from "@/services/speech.service";
 import type { GeocodedPoint, NavigationStep, RoutePlan } from "@/types/route.types";
 import { formatDistance, formatDuration } from "@/utils/format";
 
@@ -59,7 +60,15 @@ async function planRoute(): Promise<void> {
         }
         const arrivalStop = orderedStops[legIndex + 1];
         return arrivalStop
-          ? { ...step, instruction: `Arrive at ${arrivalStop.label}`, roadLabel: arrivalStop.label }
+          ? {
+              ...step,
+              instructions: {
+                en: `Arrive at ${arrivalStop.label}`,
+                fi: `Saavuit kohteeseen ${arrivalStop.label}`,
+                sv: `Du har anlänt till ${arrivalStop.label}`,
+              },
+              roadLabel: arrivalStop.label,
+            }
           : step;
       }),
     );
@@ -204,7 +213,7 @@ function clearRoute(): void {
         v-for="(step, index) in directions"
         :key="index"
       >
-        <span class="instruction">{{ step.instruction }}</span>
+        <span class="instruction">{{ step.instructions[currentLanguage] }}</span>
         <span class="step-distance">{{ formatDistance(step.distanceMeters) }}</span>
       </li>
     </ol>

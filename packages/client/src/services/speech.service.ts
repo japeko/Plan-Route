@@ -1,4 +1,20 @@
-import { ref } from "vue";
+import { computed, ref } from "vue";
+import type { NavigationLanguage } from "@/types/route.types";
+
+// Voices are restricted to these languages, since translated instructions
+// only exist for them (see routing.service.ts) — no point offering a
+// voice we'd only ever feed English text to.
+const SUPPORTED_LANGUAGES: NavigationLanguage[] = ["en", "fi", "sv"];
+
+// The primary language subtag — the part before the region, e.g. "en" from
+// "en-US" or "en_US" (some Android/browser combinations use an underscore
+// instead of the standard BCP-47 dash). Not a startsWith() check against
+// the tag as a whole: Filipino is "fil-PH"/"fil_PH", and
+// "fil-ph".startsWith("fi") is true in JS, which let Filipino voices slip
+// through a naive Finnish-prefix filter.
+function primaryLanguageSubtag(lang: string): string {
+  return lang.toLowerCase().split(/[-_]/)[0] ?? "";
+}
 
 // The Web Speech API exposes no gender/accent fields on SpeechSynthesisVoice
 // — only a name and a BCP-47 language tag (e.g. "en-IN", "en-AU"). Which
@@ -45,18 +61,20 @@ export const selectedVoiceKey = ref<string | null>(
   typeof localStorage !== "undefined" ? localStorage.getItem(VOICE_STORAGE_KEY) : null,
 );
 
-let fallbackVoice: SpeechSynthesisVoice | null = null;
+const fallbackVoice = ref<SpeechSynthesisVoice | null>(null);
 
 function loadVoices(): void {
-  const voices = window.speechSynthesis.getVoices();
+  const voices = window.speechSynthesis
+    .getVoices()
+    .filter((voice) => (SUPPORTED_LANGUAGES as string[]).includes(primaryLanguageSubtag(voice.lang)));
   if (voices.length === 0) {
     return;
   }
   availableVoices.value = voices;
 
-  const englishVoices = voices.filter((voice) => voice.lang.toLowerCase().startsWith("en"));
+  const englishVoices = voices.filter((voice) => primaryLanguageSubtag(voice.lang) === "en");
   const candidates = englishVoices.length > 0 ? englishVoices : voices;
-  fallbackVoice =
+  fallbackVoice.value =
     candidates.find((voice) => FEMALE_VOICE_NAME_HINTS.some((hint) => voice.name.toLowerCase().includes(hint))) ??
     null;
 }
@@ -84,8 +102,17 @@ function resolveVoice(): SpeechSynthesisVoice | null {
       return chosen;
     }
   }
-  return fallbackVoice;
+  return fallbackVoice.value;
 }
+
+// Which translated instruction text to speak, derived from whichever
+// voice will actually be used — falls back to English if the resolved
+// voice's language isn't one of the supported navigation languages (e.g.
+// no voices loaded yet).
+export const currentLanguage = computed<NavigationLanguage>(() => {
+  const subtag = primaryLanguageSubtag(resolveVoice()?.lang ?? "en");
+  return SUPPORTED_LANGUAGES.find((lang) => lang === subtag) ?? "en";
+});
 
 export function speak(text: string): void {
   if (!("speechSynthesis" in window)) {
