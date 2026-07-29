@@ -17,4 +17,6 @@ export const OSM_TILE_LAYER_ATTRIBUTION =
 
 // While live-navigating, the map follows the vehicle and shows roughly
 // this much of the upcoming road ahead, rather than the whole route.
-export const NAVIGATION_VIEW_DISTANCE_METERS = 5000;
+// Smaller = more zoomed in (roads/street names easier to read), at the
+// cost of seeing fewer upcoming turns at a glance.
+export const NAVIGATION_VIEW_DISTANCE_METERS = 500;
