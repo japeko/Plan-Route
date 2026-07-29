@@ -1,0 +1,1 @@
+docker login ghcr.io -u japeko -p <git config --global credential.helper>
