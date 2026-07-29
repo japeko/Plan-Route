@@ -3,6 +3,7 @@ import { ref } from "vue";
 import MapView from "@/components/MapView.vue";
 import RouteFilters from "@/components/RouteFilters.vue";
 import RoutePlanner from "@/components/RoutePlanner.vue";
+import VoiceSettings from "@/components/VoiceSettings.vue";
 import { DEFAULT_POI_FILTERS } from "@/constants/filters.constants";
 import type { PoiFilterOptions, RoutePlan } from "@/types/route.types";
 
@@ -23,6 +24,7 @@ function handleRouteCleared(): void {
       :class="{ 'sidebar--nav-hidden': isNavigating }"
     >
       <h1>Roadside Stops (Finland)</h1>
+      <VoiceSettings />
       <RoutePlanner
         @route-planned="route = $event"
         @route-cleared="handleRouteCleared"
