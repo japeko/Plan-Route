@@ -23,6 +23,7 @@ import {
   sliceUpcomingPath,
   watchVehiclePosition,
 } from "@/services/navigation.service";
+import { compassError, heading, startCompass, stopCompass } from "@/services/compass.service";
 import { currentLanguage, speak, stopSpeaking } from "@/services/speech.service";
 import type { PoiFilterOptions, RoutePlan } from "@/types/route.types";
 import { formatDistance } from "@/utils/format";
@@ -298,7 +299,12 @@ onMounted(() => {
     minZoom: FINLAND_MIN_ZOOM,
     maxBounds: FINLAND_BOUNDS,
     maxBoundsViscosity: 1,
+    // Default top-left position collides with the compass widget there;
+    // bottom-right is the least contested corner (only briefly shares
+    // space with the recenter button while navigating).
+    zoomControl: false,
   });
+  L.control.zoom({ position: "bottomright" }).addTo(map);
 
   L.tileLayer(OSM_TILE_LAYER_URL, { attribution: OSM_TILE_LAYER_ATTRIBUTION }).addTo(map);
   map.fitBounds(FINLAND_BOUNDS);
@@ -338,11 +344,18 @@ onMounted(() => {
       }
     },
   );
+
+  // Works immediately on browsers with no permission gate (Android,
+  // desktop); iOS Safari requires the request to originate from a user
+  // gesture, so it'll no-op here and the compass widget's own click
+  // handler below is what actually grants it there.
+  void startCompass();
 });
 
 onUnmounted(() => {
   stopWatchingPosition?.();
   stopSpeaking();
+  stopCompass();
   map?.remove();
   map = null;
 });
@@ -354,6 +367,27 @@ onUnmounted(() => {
       ref="mapContainer"
       class="map-container"
     />
+    <button
+      type="button"
+      class="compass"
+      :title="heading !== null ? `Heading: ${Math.round(heading)}°` : 'Tap to enable the compass'"
+      @click="startCompass"
+    >
+      <span
+        class="compass-needle"
+        :style="{ transform: `rotate(${heading ?? 0}deg)` }"
+      >
+        <span class="needle-half needle-north" />
+        <span class="needle-half needle-south" />
+      </span>
+      <span class="compass-n">N</span>
+    </button>
+    <p
+      v-if="compassError"
+      class="map-error compass-error"
+    >
+      {{ compassError }}
+    </p>
     <div
       v-if="route"
       class="legend"
@@ -476,6 +510,13 @@ onUnmounted(() => {
   border: 3px solid white;
   box-shadow: 0 0 0 2px #e64980, 0 1px 4px rgba(0, 0, 0, 0.5);
 }
+
+/* Leaflet's default 10px margin puts the zoom control right where the
+   recenter button sits (bottom-right, see .recenter-button below) —
+   push it up clear of it. */
+.leaflet-control-zoom {
+  margin-bottom: 4.5rem !important;
+}
 </style>
 
 <style scoped>
@@ -490,15 +531,78 @@ onUnmounted(() => {
   height: 100%;
 }
 
-.map-error {
+.compass {
   position: absolute;
   top: 0.5rem;
+  left: 0.5rem;
+  z-index: 1000;
+  width: 3rem;
+  height: 3rem;
+  border-radius: 50%;
+  border: 1px solid #ced4da;
+  background: rgba(255, 255, 255, 0.9);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.compass-needle {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  transform-origin: center;
+}
+
+/* Classic two-tone needle: the red half always points toward the
+   current heading (north when heading is 0), the gray half the
+   opposite way — unambiguous at a glance, unlike a single symmetric
+   arrow glyph. */
+.needle-half {
+  position: absolute;
+  left: -5px;
+  width: 0;
+  height: 0;
+  border-left: 5px solid transparent;
+  border-right: 5px solid transparent;
+}
+
+.needle-north {
+  top: -16px;
+  border-bottom: 16px solid #e03131;
+}
+
+.needle-south {
+  top: 0;
+  border-top: 16px solid #adb5bd;
+}
+
+.compass-n {
+  position: absolute;
+  top: 0.15rem;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 0.6rem;
+  font-weight: 700;
+  color: #495057;
+}
+
+.map-error {
+  position: absolute;
+  top: 3.5rem;
   left: 0.5rem;
   z-index: 1000;
   background: #fff3bf;
   padding: 0.4rem 0.75rem;
   border-radius: 4px;
   font-size: 0.85rem;
+}
+
+.compass-error {
+  max-width: 10rem;
 }
 
 .legend {
