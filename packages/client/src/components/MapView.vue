@@ -398,7 +398,8 @@ onUnmounted(() => {
       v-if="isNavigating && currentStep"
       class="nav-banner"
     >
-      <span class="nav-instruction">{{ currentStep.instruction }}</span>
+      <span class="nav-arrow">{{ currentStep.arrow }}</span>
+      <span class="nav-instruction">{{ currentStep.roadLabel }}</span>
       <span
         v-if="distanceToNextStep !== null"
         class="nav-distance"
@@ -557,6 +558,13 @@ onUnmounted(() => {
   align-items: baseline;
   gap: 0.6rem;
   max-width: min(80%, 480px);
+}
+
+.nav-arrow {
+  flex-shrink: 0;
+  font-size: 1.4rem;
+  font-weight: 700;
+  line-height: 1;
 }
 
 .nav-instruction {

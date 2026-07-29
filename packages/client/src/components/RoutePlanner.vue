@@ -58,7 +58,9 @@ async function planRoute(): Promise<void> {
           return step;
         }
         const arrivalStop = orderedStops[legIndex + 1];
-        return arrivalStop ? { ...step, instruction: `Arrive at ${arrivalStop.label}` } : step;
+        return arrivalStop
+          ? { ...step, instruction: `Arrive at ${arrivalStop.label}`, roadLabel: arrivalStop.label }
+          : step;
       }),
     );
     directions.value = steps;

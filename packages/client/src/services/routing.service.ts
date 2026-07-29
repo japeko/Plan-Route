@@ -62,6 +62,20 @@ const TURN_PHRASES: Record<string, string> = {
   "sharp left": "Turn sharp left",
 };
 
+// Arrow glyphs for the on-screen banner, keyed the same way as
+// TURN_PHRASES — used instead of spelling out the turn, since a phone
+// screen rarely has room for both the instruction and the road name.
+const TURN_ARROWS: Record<string, string> = {
+  uturn: "↩",
+  "sharp right": "↘",
+  right: "↱",
+  "slight right": "↗",
+  straight: "↑",
+  "slight left": "↖",
+  left: "↰",
+  "sharp left": "↙",
+};
+
 function describeStep(step: OsrmStep): string {
   const road = step.name || "the road";
   const { type, modifier } = step.maneuver;
@@ -91,6 +105,30 @@ function describeStep(step: OsrmStep): string {
     default:
       return `Continue onto ${road}`;
   }
+}
+
+function maneuverArrow(maneuver: OsrmManeuver): string {
+  const { type, modifier } = maneuver;
+
+  switch (type) {
+    case "arrive":
+      return "🏁";
+    case "roundabout":
+    case "rotary":
+    case "roundabout turn":
+    case "exit roundabout":
+    case "exit rotary":
+      return "⟳";
+    default:
+      return (modifier && TURN_ARROWS[modifier]) || "↑";
+  }
+}
+
+function roadLabel(step: OsrmStep): string {
+  if (step.maneuver.type === "arrive") {
+    return "Destination";
+  }
+  return step.name || "the road";
 }
 
 export async function fetchRoadTrip(stops: LatLngTuple[]): Promise<RoadTrip> {
@@ -129,6 +167,8 @@ export async function fetchRoadTrip(stops: LatLngTuple[]): Promise<RoadTrip> {
   const legs = trip.legs.map((leg) =>
     leg.steps.map((step) => ({
       instruction: describeStep(step),
+      arrow: maneuverArrow(step.maneuver),
+      roadLabel: roadLabel(step),
       distanceMeters: step.distance,
       durationSeconds: step.duration,
       location: [step.maneuver.location[1], step.maneuver.location[0]] as LatLngTuple,
