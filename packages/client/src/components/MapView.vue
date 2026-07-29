@@ -28,6 +28,7 @@ import type { PoiFilterOptions, RoutePlan } from "@/types/route.types";
 import { formatDistance } from "@/utils/format";
 
 const props = defineProps<{ route: RoutePlan | null; filters: PoiFilterOptions }>();
+const emit = defineEmits<{ navigating: [boolean] }>();
 
 const mapContainer = ref<HTMLDivElement | null>(null);
 const errorMessage = ref<string | null>(null);
@@ -177,6 +178,7 @@ function stopNavigation(): void {
   vehicleMarker?.remove();
   vehicleMarker = null;
   stopSpeaking();
+  emit("navigating", false);
 
   if (map && props.route) {
     map.fitBounds(L.latLngBounds(props.route.path), { padding: [32, 32] });
@@ -221,6 +223,7 @@ function startNavigation(): void {
   );
 
   isNavigating.value = true;
+  emit("navigating", true);
 }
 
 function toggleNavigation(): void {

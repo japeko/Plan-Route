@@ -8,6 +8,7 @@ import type { PoiFilterOptions, RoutePlan } from "@/types/route.types";
 
 const route = ref<RoutePlan | null>(null);
 const filters = ref<PoiFilterOptions>({ ...DEFAULT_POI_FILTERS });
+const isNavigating = ref(false);
 
 function handleRouteCleared(): void {
   route.value = null;
@@ -17,7 +18,10 @@ function handleRouteCleared(): void {
 
 <template>
   <div class="app">
-    <aside class="sidebar">
+    <aside
+      class="sidebar"
+      :class="{ 'sidebar--nav-hidden': isNavigating }"
+    >
       <h1>Roadside Stops (Finland)</h1>
       <RoutePlanner
         @route-planned="route = $event"
@@ -33,6 +37,7 @@ function handleRouteCleared(): void {
       <MapView
         :route="route"
         :filters="filters"
+        @navigating="isNavigating = $event"
       />
     </main>
   </div>
@@ -74,6 +79,10 @@ function handleRouteCleared(): void {
   .sidebar {
     width: 100%;
     max-height: 45vh;
+  }
+
+  .sidebar--nav-hidden {
+    display: none;
   }
 
   .map-area {
