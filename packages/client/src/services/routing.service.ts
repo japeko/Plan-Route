@@ -10,11 +10,18 @@ interface OsrmManeuver {
   type: string;
   modifier?: string;
   location: [number, number];
+  // Which exit to take, counting from 1, on roundabout/rotary maneuvers.
+  exit?: number;
 }
 
 interface OsrmStep {
   maneuver: OsrmManeuver;
   name: string;
+  // Populated by OSRM on many motorway ramps/junctions even when `name`
+  // isn't — the signed destinations (e.g. "Turku, Pori") and the road's
+  // reference number (e.g. "E4") respectively.
+  destinations?: string;
+  ref?: string;
   distance: number;
   duration: number;
 }
@@ -100,90 +107,145 @@ const TURN_ARROWS: Record<string, string> = {
   "sharp left": "↙",
 };
 
+// Ordinal words for roundabout exit counts ("2nd exit", "toinen
+// poistumistie", "andra avfarten") — realistically only ever needs a
+// handful of entries; anything beyond falls back to a bare number.
+const ORDINAL_WORDS: Record<Exclude<NavigationLanguage, "en">, string[]> = {
+  fi: ["ensimmäinen", "toinen", "kolmas", "neljäs", "viides", "kuudes", "seitsemäs", "kahdeksas"],
+  sv: ["första", "andra", "tredje", "fjärde", "femte", "sjätte", "sjunde", "åttonde"],
+};
+
+function ordinal(n: number, lang: NavigationLanguage): string {
+  if (lang === "en") {
+    const lastTwoDigits = n % 100;
+    if (lastTwoDigits >= 11 && lastTwoDigits <= 13) {
+      return `${n}th`;
+    }
+    switch (n % 10) {
+      case 1:
+        return `${n}st`;
+      case 2:
+        return `${n}nd`;
+      case 3:
+        return `${n}rd`;
+      default:
+        return `${n}th`;
+    }
+  }
+  return ORDINAL_WORDS[lang][n - 1] ?? `${n}.`;
+}
+
+// The best available label for where a maneuver leads: OSRM often leaves
+// `name` empty on motorway ramps/junctions, but still provides the signed
+// destinations ("Turku, Pori") or the road's reference number ("E4") —
+// both far more useful than a generic "the road" filler when present.
+function namedRoad(step: OsrmStep): string {
+  return step.name || step.destinations || step.ref || "";
+}
+
 function describeStep(step: OsrmStep, lang: NavigationLanguage): string {
-  const road = step.name || (lang === "en" ? "the road" : lang === "fi" ? "tielle" : "vägen");
+  const road = namedRoad(step);
   const { type, modifier } = step.maneuver;
   const turnPhrase = (modifier && TURN_PHRASES[lang][modifier]) || TURN_PHRASES[lang].straight;
 
   switch (lang) {
-    case "fi":
+    case "fi": {
+      // Each base phrase already ends in the case-inflected word for
+      // "onto/towards the road" ("tielle"/"tietä") — that alone is a
+      // complete, grammatical sentence when there's no name to append, so
+      // road is appended only when there is one, instead of substituting
+      // a generic filler word that would just repeat it.
+      const withRoad = (base: string) => (road ? `${base} ${road}` : base);
       switch (type) {
         case "depart":
-          return `Aja tielle ${road}`;
+          return withRoad("Aja tielle");
         case "arrive":
           return "Olet perillä";
         case "merge":
-          return `Liity tielle ${road}`;
+          return withRoad("Liity tielle");
         case "on ramp":
-          return `Aja rampille tielle ${road}`;
+          return withRoad("Aja rampille tielle");
         case "off ramp":
-          return `Poistu rampilta tielle ${road}`;
+          return withRoad("Poistu rampilta tielle");
         case "fork":
         case "end of road":
         case "turn":
-          return `${turnPhrase} tielle ${road}`;
+          return withRoad(`${turnPhrase} tielle`);
         case "roundabout":
         case "rotary":
         case "roundabout turn":
-          return `Jatka liikenneympyrässä tielle ${road}`;
+          return withRoad(
+            step.maneuver.exit
+              ? `Ota liikenneympyrästä ${ordinal(step.maneuver.exit, "fi")} poistumistie tielle`
+              : "Jatka liikenneympyrässä tielle",
+          );
         case "exit roundabout":
         case "exit rotary":
-          return `Poistu liikenneympyrästä tielle ${road}`;
+          return withRoad("Poistu liikenneympyrästä tielle");
         default:
-          return `Jatka tietä ${road}`;
+          return withRoad("Jatka tietä");
       }
-    case "sv":
+    }
+    case "sv": {
+      const withFallback = road || "vägen";
       switch (type) {
         case "depart":
-          return `Kör ut på ${road}`;
+          return `Kör ut på ${withFallback}`;
         case "arrive":
           return "Du har anlänt";
         case "merge":
-          return `Anslut till ${road}`;
+          return `Anslut till ${withFallback}`;
         case "on ramp":
-          return `Kör upp på påfarten mot ${road}`;
+          return `Kör upp på påfarten mot ${withFallback}`;
         case "off ramp":
-          return `Kör av mot ${road}`;
+          return `Kör av mot ${withFallback}`;
         case "fork":
         case "end of road":
         case "turn":
-          return `${turnPhrase} in på ${road}`;
+          return `${turnPhrase} in på ${withFallback}`;
         case "roundabout":
         case "rotary":
         case "roundabout turn":
-          return `Fortsätt i rondellen mot ${road}`;
+          return step.maneuver.exit
+            ? `I rondellen, ta ${ordinal(step.maneuver.exit, "sv")} avfarten mot ${withFallback}`
+            : `Fortsätt i rondellen mot ${withFallback}`;
         case "exit roundabout":
         case "exit rotary":
-          return `Kör ut ur rondellen mot ${road}`;
+          return `Kör ut ur rondellen mot ${withFallback}`;
         default:
-          return `Fortsätt på ${road}`;
+          return `Fortsätt på ${withFallback}`;
       }
-    default:
+    }
+    default: {
+      const withFallback = road || "the road";
       switch (type) {
         case "depart":
-          return `Head out on ${road}`;
+          return `Head out on ${withFallback}`;
         case "arrive":
           return "Arrive at your destination";
         case "merge":
-          return `Merge onto ${road}`;
+          return `Merge onto ${withFallback}`;
         case "on ramp":
-          return `Take the ramp onto ${road}`;
+          return `Take the ramp onto ${withFallback}`;
         case "off ramp":
-          return `Take the exit onto ${road}`;
+          return `Take the exit onto ${withFallback}`;
         case "fork":
         case "end of road":
         case "turn":
-          return `${turnPhrase} onto ${road}`;
+          return `${turnPhrase} onto ${withFallback}`;
         case "roundabout":
         case "rotary":
         case "roundabout turn":
-          return `At the roundabout, continue onto ${road}`;
+          return step.maneuver.exit
+            ? `At the roundabout, take the ${ordinal(step.maneuver.exit, "en")} exit onto ${withFallback}`
+            : `At the roundabout, continue onto ${withFallback}`;
         case "exit roundabout":
         case "exit rotary":
-          return `Exit the roundabout onto ${road}`;
+          return `Exit the roundabout onto ${withFallback}`;
         default:
-          return `Continue onto ${road}`;
+          return `Continue onto ${withFallback}`;
       }
+    }
   }
 }
 
@@ -215,7 +277,7 @@ function roadLabel(step: OsrmStep): string {
   if (step.maneuver.type === "arrive") {
     return "Destination";
   }
-  return step.name || "the road";
+  return namedRoad(step) || "the road";
 }
 
 export async function fetchRoadTrip(stops: LatLngTuple[]): Promise<RoadTrip> {
