@@ -14,6 +14,8 @@ export interface PointOfInterestDocument {
   hasGasoline?: boolean;
   hasElectricCharging?: boolean;
   hasRestaurant?: boolean;
+  hasTentSites?: boolean;
+  hasCaravanSites?: boolean;
 }
 
 const geoPointSchema = new Schema<GeoPointDocument>(
@@ -35,7 +37,7 @@ const toJsonTransform = {
 const pointOfInterestSchema = new Schema<PointOfInterestDocument>(
   {
     name: { type: String, required: true },
-    type: { type: String, enum: ["gas_station", "restaurant"], required: true },
+    type: { type: String, enum: ["gas_station", "restaurant", "camping"], required: true },
     location: { type: geoPointSchema, required: true },
     address: { type: String, required: false },
   },
@@ -74,4 +76,17 @@ export const GasStationModel = PointOfInterestModel.discriminator<GasStationDocu
 export const RestaurantModel = PointOfInterestModel.discriminator(
   "restaurant",
   new Schema({}),
+);
+
+export interface CampingDocument extends PointOfInterestDocument {
+  hasTentSites: boolean;
+  hasCaravanSites: boolean;
+}
+
+export const CampingModel = PointOfInterestModel.discriminator<CampingDocument>(
+  "camping",
+  new Schema<CampingDocument>({
+    hasTentSites: { type: Boolean, required: true },
+    hasCaravanSites: { type: Boolean, required: true },
+  }),
 );

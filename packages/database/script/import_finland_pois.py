@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Import Finnish gas stations and restaurants from OpenStreetMap into the poi database.
+"""Import Finnish gas stations, restaurants, and camping areas from OpenStreetMap into the poi database.
 
 Data source: the Overpass API (OpenStreetMap), the same free/no-key OSM stack
 already used by packages/client for tiles, geocoding, and routing. Safe to
@@ -11,6 +11,10 @@ fuel (amenity=fuel) and charging (amenity=charging_station) OSM elements
 found within STATION_MERGE_PROXIMITY_METERS of each other are merged into
 a single station; a charging point with no nearby fuel pump becomes its
 own electric-only station, and vice versa.
+
+A "camping" record can offer tent sites, caravan sites, or both, read from
+OSM's tourism=camp_site / tourism=caravan_site tags (and their tents=/
+caravans= sub-tags).
 
 Usage:
     pip install -r requirements.txt
@@ -41,17 +45,17 @@ RESTAURANT_PROXIMITY_METERS = 60
 STATION_MERGE_PROXIMITY_METERS = 50
 REQUEST_TIMEOUT_SECONDS = 220
 
-def build_query(amenity: str) -> str:
-    # One amenity per request: overpass-api.de's public gateway has a hard
+def build_query(tag_key: str, tag_value: str) -> str:
+    # One tag per request: overpass-api.de's public gateway has a hard
     # timeout shorter than the [timeout:N] budget below, and a single
-    # combined fuel+charging_station+restaurant nationwide query reliably
-    # exceeded it (504) even though each amenity alone comfortably fits.
+    # combined nationwide query across every category reliably exceeded it
+    # (504) even though each tag alone comfortably fits.
     return f"""
 [out:json][timeout:120];
 area["ISO3166-1"="{FINLAND_ISO_CODE}"][admin_level=2]->.finland;
 (
-  node["amenity"="{amenity}"](area.finland);
-  way["amenity"="{amenity}"](area.finland);
+  node["{tag_key}"="{tag_value}"](area.finland);
+  way["{tag_key}"="{tag_value}"](area.finland);
 );
 out center tags;
 """
@@ -60,7 +64,7 @@ out center tags;
 @dataclass
 class OsmElement:
     osm_id: str
-    amenity: str
+    tag_value: str
     lat: float
     lon: float
     tags: dict[str, str]
@@ -78,8 +82,8 @@ class StationRecord:
     has_restaurant: bool = False
 
 
-def fetch_osm_elements_for_amenity(amenity: str, *, max_attempts: int = 4) -> list[OsmElement]:
-    query = build_query(amenity)
+def fetch_osm_elements(tag_key: str, tag_value: str, *, max_attempts: int = 4) -> list[OsmElement]:
+    query = build_query(tag_key, tag_value)
     response: requests.Response | None = None
     for attempt in range(1, max_attempts + 1):
         try:
@@ -96,7 +100,7 @@ def fetch_osm_elements_for_amenity(amenity: str, *, max_attempts: int = 4) -> li
                 raise
             wait_seconds = 10 * attempt
             print(
-                f"Overpass request for '{amenity}' failed (attempt {attempt}/{max_attempts}): {err}. "
+                f"Overpass request for '{tag_key}={tag_value}' failed (attempt {attempt}/{max_attempts}): {err}. "
                 f"Retrying in {wait_seconds}s...",
                 file=sys.stderr,
             )
@@ -117,14 +121,14 @@ def fetch_osm_elements_for_amenity(amenity: str, *, max_attempts: int = 4) -> li
             continue
 
         tags = el.get("tags", {})
-        el_amenity = tags.get("amenity")
-        if el_amenity != amenity:
+        el_tag_value = tags.get(tag_key)
+        if el_tag_value != tag_value:
             continue
 
         elements.append(
             OsmElement(
                 osm_id=f"{el['type']}/{el['id']}",
-                amenity=el_amenity,
+                tag_value=el_tag_value,
                 lat=lat,
                 lon=lon,
                 tags=tags,
@@ -250,17 +254,43 @@ def restaurant_to_document(restaurant: OsmElement) -> dict[str, Any]:
     }
 
 
+def camping_to_document(camp: OsmElement) -> dict[str, Any]:
+    # camp_site is tent-oriented and caravan_site is caravan-oriented by
+    # default; either can be overridden by an explicit tents=/caravans=
+    # tag (e.g. a caravan_site that also allows tents).
+    is_caravan_site = camp.tag_value == "caravan_site"
+    has_tent_sites = camp.tags.get("tents", "no" if is_caravan_site else "yes") == "yes"
+    has_caravan_sites = camp.tags.get("caravans", "yes" if is_caravan_site else "no") == "yes"
+
+    return {
+        "osmId": camp.osm_id,
+        "name": build_name(camp.tags, "Camping area"),
+        "type": "camping",
+        "location": {"type": "Point", "coordinates": [camp.lon, camp.lat]},
+        "address": build_address(camp.tags),
+        "hasTentSites": has_tent_sites,
+        "hasCaravanSites": has_caravan_sites,
+        "updatedAt": datetime.now(timezone.utc),
+    }
+
+
 def import_pois(mongodb_uri: str) -> None:
-    print("Fetching gas stations, EV charging points, and restaurants in Finland from Overpass API...")
+    print("Fetching gas stations, EV charging points, restaurants, and camping areas in Finland from Overpass API...")
     print("  (one request per category, paced to avoid the public Overpass gateway's rate limit/timeout)")
-    fuel_elements = fetch_osm_elements_for_amenity("fuel")
+    fuel_elements = fetch_osm_elements("amenity", "fuel")
     print(f"  fuel: {len(fuel_elements)}")
     time.sleep(5)
-    charging_elements = fetch_osm_elements_for_amenity("charging_station")
+    charging_elements = fetch_osm_elements("amenity", "charging_station")
     print(f"  charging_station: {len(charging_elements)}")
     time.sleep(5)
-    restaurant_elements = fetch_osm_elements_for_amenity("restaurant")
+    restaurant_elements = fetch_osm_elements("amenity", "restaurant")
     print(f"  restaurant: {len(restaurant_elements)}")
+    time.sleep(5)
+    camp_site_elements = fetch_osm_elements("tourism", "camp_site")
+    print(f"  camp_site: {len(camp_site_elements)}")
+    time.sleep(5)
+    caravan_site_elements = fetch_osm_elements("tourism", "caravan_site")
+    print(f"  caravan_site: {len(caravan_site_elements)}")
 
     print("Merging co-located fuel/charging points into stations and checking for attached restaurants...")
     stations = merge_fuel_and_charging(fuel_elements, charging_elements, restaurant_elements)
@@ -275,8 +305,12 @@ def import_pois(mongodb_uri: str) -> None:
         f"Built {len(stations)} gas stations ({both_count} offer both gasoline and electric charging)."
     )
 
+    camping_elements = camp_site_elements + caravan_site_elements
+    print(f"Built {len(camping_elements)} camping areas.")
+
     documents: list[dict[str, Any]] = [station_to_document(s) for s in stations]
     documents += [restaurant_to_document(r) for r in restaurant_elements]
+    documents += [camping_to_document(c) for c in camping_elements]
 
     client = MongoClient(mongodb_uri)
     collection = client.get_default_database()[COLLECTION_NAME]

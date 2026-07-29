@@ -40,4 +40,12 @@ export const SEED_POIS: CreatePoiDto[] = [
     hasElectricCharging: true,
     hasRestaurant: false,
   },
+  {
+    type: "camping",
+    name: "Rastila Camping",
+    location: { type: "Point", coordinates: [25.0989, 60.1935] },
+    address: "Karavaanikatu 4, Helsinki",
+    hasTentSites: true,
+    hasCaravanSites: true,
+  },
 ];

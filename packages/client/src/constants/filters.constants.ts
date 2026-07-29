@@ -1,4 +1,4 @@
-import { DEFAULT_ROUTE_FILTER_RADIUS_METERS, FUEL_TYPES } from "@poi/shared";
+import { DEFAULT_CAMPING_FILTER_RADIUS_METERS, DEFAULT_ROUTE_FILTER_RADIUS_METERS, FUEL_TYPES } from "@poi/shared";
 import type { PoiFilterOptions } from "@/types/route.types";
 
 export const DEFAULT_POI_FILTERS: PoiFilterOptions = {
@@ -7,4 +7,6 @@ export const DEFAULT_POI_FILTERS: PoiFilterOptions = {
   showGasStations: true,
   fuelTypes: [...FUEL_TYPES],
   onlyWithRestaurant: false,
+  showCamping: false,
+  campingRadiusMeters: DEFAULT_CAMPING_FILTER_RADIUS_METERS,
 };

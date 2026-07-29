@@ -63,7 +63,7 @@ function stationFillColor(poi: GasStationPoi): string {
 }
 
 function poiMarkerIcon(poi: PointOfInterest): L.DivIcon {
-  const fill = poi.type === "restaurant" ? "#e8590c" : stationFillColor(poi);
+  const fill = poi.type === "restaurant" ? "#e8590c" : poi.type === "camping" ? "#795548" : stationFillColor(poi);
   const border = poi.type === "gas_station" && poi.hasRestaurant ? "#f59f00" : "#ffffff";
   return L.divIcon({
     className: "poi-marker",
@@ -78,6 +78,18 @@ function poiPopupHtml(poi: PointOfInterest): string {
 
   if (poi.type === "restaurant") {
     return `<strong>${poi.name}</strong><br>Restaurant${address}`;
+  }
+
+  if (poi.type === "camping") {
+    const siteParts: string[] = [];
+    if (poi.hasTentSites) {
+      siteParts.push("Tent sites");
+    }
+    if (poi.hasCaravanSites) {
+      siteParts.push("Caravan sites");
+    }
+    const siteLabel = siteParts.length > 0 ? siteParts.join(" + ") : "Camping area";
+    return `<strong>${poi.name}</strong><br>${siteLabel}${address}`;
   }
 
   const fuelParts: string[] = [];
@@ -123,7 +135,7 @@ async function refreshPoisAlongRoute(): Promise<void> {
     }
     errorMessage.value = null;
   } catch {
-    errorMessage.value = "Failed to load gas stations and restaurants along the route.";
+    errorMessage.value = "Failed to load points of interest along the route.";
   }
 }
 
@@ -370,6 +382,12 @@ onUnmounted(() => {
         />Restaurant
       </div>
       <div><span class="dot ring" />Station has a restaurant</div>
+      <div>
+        <span
+          class="dot"
+          style="background: #795548"
+        />Camping area
+      </div>
     </div>
     <p
       v-if="errorMessage"

@@ -21,6 +21,13 @@ function setRadiusKm(event: Event): void {
   update({ radiusMeters: Math.round(km * 1000) });
 }
 
+const campingRadiusKm = computed(() => props.filters.campingRadiusMeters / 1000);
+
+function setCampingRadiusKm(event: Event): void {
+  const km = Number((event.target as HTMLInputElement).value);
+  update({ campingRadiusMeters: Math.round(km * 1000) });
+}
+
 function hasFuelType(fuel: FuelType): boolean {
   return props.filters.fuelTypes.includes(fuel);
 }
@@ -94,6 +101,33 @@ function toggleFuelType(fuel: FuelType, event: Event): void {
         >
         Only stations with a restaurant
       </label>
+    </div>
+
+    <label class="checkbox">
+      <input
+        type="checkbox"
+        :checked="filters.showCamping"
+        @change="update({ showCamping: checked($event) })"
+      >
+      Camping areas
+    </label>
+
+    <div
+      v-if="filters.showCamping"
+      class="sub-options"
+    >
+      <div class="field">
+        <label for="camping-radius">Show within {{ campingRadiusKm.toFixed(1) }} km of route</label>
+        <input
+          id="camping-radius"
+          type="range"
+          min="1"
+          max="50"
+          step="1"
+          :value="campingRadiusKm"
+          @input="setCampingRadiusKm"
+        >
+      </div>
     </div>
   </div>
 </template>

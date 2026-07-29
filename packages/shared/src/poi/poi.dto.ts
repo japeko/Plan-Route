@@ -14,6 +14,8 @@ export interface UpdatePoiDto {
   hasGasoline?: boolean;
   hasElectricCharging?: boolean;
   hasRestaurant?: boolean;
+  hasTentSites?: boolean;
+  hasCaravanSites?: boolean;
 }
 
 export interface PoiListQueryDto {
@@ -45,4 +47,9 @@ export interface PoiAlongRouteRequestDto {
   // both fuel-type boxes hides all gas stations regardless of restaurant).
   fuelTypes: FuelType[];
   onlyWithRestaurant: boolean;
+  showCamping: boolean;
+  // Independent from radiusMeters: camping areas are sparse enough that
+  // people will drive much further off-route to reach one than they would
+  // for a gas station, so this needs its own, larger, search radius.
+  campingRadiusMeters: number;
 }

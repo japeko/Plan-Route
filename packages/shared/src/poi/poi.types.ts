@@ -1,4 +1,4 @@
-export type PoiType = "gas_station" | "restaurant";
+export type PoiType = "gas_station" | "restaurant" | "camping";
 
 export type FuelType = "gasoline" | "electric";
 
@@ -36,4 +36,12 @@ export interface RestaurantPoi extends BasePoi {
   type: "restaurant";
 }
 
-export type PointOfInterest = GasStationPoi | RestaurantPoi;
+export interface CampingPoi extends BasePoi {
+  type: "camping";
+  // A site always offers at least one of these; mirrors the gas station's
+  // independent-flags pattern rather than a fixed enum.
+  hasTentSites: boolean;
+  hasCaravanSites: boolean;
+}
+
+export type PointOfInterest = GasStationPoi | RestaurantPoi | CampingPoi;

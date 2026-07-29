@@ -8,7 +8,7 @@ import type {
   PointOfInterest,
   UpdatePoiDto,
 } from "@poi/shared";
-import { GasStationModel, PointOfInterestModel, RestaurantModel } from "../models/pointOfInterest.model.js";
+import { CampingModel, GasStationModel, PointOfInterestModel, RestaurantModel } from "../models/pointOfInterest.model.js";
 import { POI_LIST_PROJECTION } from "../constants/poi.constants.js";
 
 // Projection is applied per the CLAUDE.md convention. POI documents are
@@ -25,6 +25,8 @@ interface LeanPoiDocument {
   hasGasoline?: boolean;
   hasElectricCharging?: boolean;
   hasRestaurant?: boolean;
+  hasTentSites?: boolean;
+  hasCaravanSites?: boolean;
 }
 
 function toPointOfInterest(doc: LeanPoiDocument): PointOfInterest {
@@ -42,6 +44,15 @@ function toPointOfInterest(doc: LeanPoiDocument): PointOfInterest {
       hasGasoline: Boolean(doc.hasGasoline),
       hasElectricCharging: Boolean(doc.hasElectricCharging),
       hasRestaurant: Boolean(doc.hasRestaurant),
+    };
+  }
+
+  if (doc.type === "camping") {
+    return {
+      ...base,
+      type: "camping",
+      hasTentSites: Boolean(doc.hasTentSites),
+      hasCaravanSites: Boolean(doc.hasCaravanSites),
     };
   }
 
@@ -83,24 +94,19 @@ export async function listPoisNearby(query: PoiNearbyQueryDto): Promise<PointOfI
   return docs.map((doc) => toPointOfInterest(doc as unknown as LeanPoiDocument));
 }
 
-function buildAlongRouteTypeFilter(options: PoiAlongRouteRequestDto): Record<string, unknown> {
-  const branches: Record<string, unknown>[] = [];
-
-  if (options.showRestaurants) {
-    branches.push({ type: "restaurant" });
+function buildCorridorFilter(
+  line: ReturnType<typeof turf.lineString>,
+  radiusMeters: number,
+  typeFilter: Record<string, unknown>,
+): Record<string, unknown> | null {
+  const corridor = turf.buffer(line, radiusMeters, { units: "meters", steps: 8 });
+  if (!corridor) {
+    return null;
   }
-
-  if (options.showGasStations && options.fuelTypes.length > 0) {
-    branches.push({
-      type: "gas_station",
-      $or: options.fuelTypes.map((fuel) => (fuel === "gasoline" ? { hasGasoline: true } : { hasElectricCharging: true })),
-      ...(options.onlyWithRestaurant ? { hasRestaurant: true } : {}),
-    });
-  }
-
-  // No branch selected (e.g. both category checkboxes off) should match
-  // nothing rather than falling through to "no filter at all".
-  return branches.length > 0 ? { $or: branches } : { _id: null };
+  return {
+    ...typeFilter,
+    location: { $geoWithin: { $geometry: corridor.geometry } },
+  };
 }
 
 export async function listPoisAlongRoute(options: PoiAlongRouteRequestDto): Promise<PointOfInterest[]> {
@@ -111,18 +117,47 @@ export async function listPoisAlongRoute(options: PoiAlongRouteRequestDto): Prom
     tolerance: 0.001,
     highQuality: false,
   });
-  const corridor = turf.buffer(line, options.radiusMeters, { units: "meters", steps: 8 });
 
-  if (!corridor) {
+  // Camping areas are far sparser than gas stations/restaurants, so they
+  // search a separately-sized corridor rather than sharing radiusMeters —
+  // each branch below carries its own $geoWithin geometry rather than one
+  // shared corridor applied to every type.
+  const branches: Record<string, unknown>[] = [];
+
+  const sharedTypeBranches: Record<string, unknown>[] = [];
+  if (options.showRestaurants) {
+    sharedTypeBranches.push({ type: "restaurant" });
+  }
+  if (options.showGasStations && options.fuelTypes.length > 0) {
+    sharedTypeBranches.push({
+      type: "gas_station",
+      $or: options.fuelTypes.map((fuel) => (fuel === "gasoline" ? { hasGasoline: true } : { hasElectricCharging: true })),
+      ...(options.onlyWithRestaurant ? { hasRestaurant: true } : {}),
+    });
+  }
+  if (sharedTypeBranches.length > 0) {
+    const filter = buildCorridorFilter(line, options.radiusMeters, { $or: sharedTypeBranches });
+    if (filter) {
+      branches.push(filter);
+    }
+  }
+
+  if (options.showCamping) {
+    const filter = buildCorridorFilter(line, options.campingRadiusMeters, { type: "camping" });
+    if (filter) {
+      branches.push(filter);
+    }
+  }
+
+  // Nothing selected (or both corridors somehow came back empty) should
+  // match nothing rather than falling through to "no filter at all". A
+  // single-branch $or behaves identically to matching that branch
+  // directly, so there's no need to special-case the count.
+  if (branches.length === 0) {
     return [];
   }
 
-  const filter = {
-    ...buildAlongRouteTypeFilter(options),
-    location: { $geoWithin: { $geometry: corridor.geometry } },
-  };
-
-  const docs = await PointOfInterestModel.find(filter).select(POI_LIST_PROJECTION).lean();
+  const docs = await PointOfInterestModel.find({ $or: branches }).select(POI_LIST_PROJECTION).lean();
   return docs.map((doc) => toPointOfInterest(doc as unknown as LeanPoiDocument));
 }
 
@@ -132,7 +167,12 @@ export async function getPoiById(id: string): Promise<PointOfInterest | null> {
 }
 
 export async function createPoi(dto: CreatePoiDto): Promise<PointOfInterest> {
-  const doc = dto.type === "gas_station" ? await GasStationModel.create(dto) : await RestaurantModel.create(dto);
+  const doc =
+    dto.type === "gas_station"
+      ? await GasStationModel.create(dto)
+      : dto.type === "camping"
+        ? await CampingModel.create(dto)
+        : await RestaurantModel.create(dto);
   const lean = doc.toObject();
   return toPointOfInterest(lean as unknown as LeanPoiDocument);
 }
