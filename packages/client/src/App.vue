@@ -48,6 +48,11 @@ function handleRouteCleared(): void {
   display: flex;
   width: 100vw;
   height: 100vh;
+  /* 100vh on mobile Safari/Chrome includes the area behind the address
+     bar, pushing bottom-anchored absolute elements off-screen; 100dvh
+     tracks the actual visible viewport. Kept 100vh above as a fallback
+     for browsers that don't support dvh. */
+  height: 100dvh;
 }
 
 .sidebar {

@@ -54,10 +54,6 @@ let poiLayer: L.LayerGroup | null = null;
 let routeLayer: L.LayerGroup | null = null;
 let vehicleMarker: L.Marker | null = null;
 let stopWatchingPosition: (() => void) | null = null;
-// Set around every programmatic map move (fitBounds while auto-centering)
-// so the movestart listener below can tell those apart from a real user
-// drag/zoom, which is the only case that should drop route-following.
-let isAutoCentering = false;
 
 function stationFillColor(poi: GasStationPoi): string {
   if (poi.hasGasoline && poi.hasElectricCharging) {
@@ -171,9 +167,7 @@ function centerOnUpcomingRoute(position: LatLngTuple): void {
   // instead of in. The vehicle marker still uses the real position.
   const snappedPosition = props.route.path[nearestIndex] ?? position;
   const upcoming = sliceUpcomingPath(props.route.path, nearestIndex, NAVIGATION_VIEW_DISTANCE_METERS);
-  isAutoCentering = true;
   map.fitBounds(L.latLngBounds([snappedPosition, ...upcoming]), { padding: [40, 40] });
-  isAutoCentering = false;
 }
 
 function recenterNavigation(): void {
@@ -299,12 +293,14 @@ onMounted(() => {
   poiLayer = L.layerGroup().addTo(map);
   routeLayer = L.layerGroup().addTo(map);
 
-  // Any view change while navigating that we didn't trigger ourselves (see
-  // isAutoCentering) is the user dragging or zooming the map — stop
-  // auto-recentering until they explicitly ask to resume via the
-  // recenter button.
-  map.on("movestart", () => {
-    if (isNavigating.value && !isAutoCentering) {
+  // A real finger/mouse press starting on the map itself is the signal to
+  // stop auto-recentering — unlike Leaflet's own movestart/zoomstart
+  // events, this can never be triggered by our own programmatic
+  // fitBounds() calls (or any follow-up Leaflet fires internally, e.g. its
+  // maxBounds correction), so there's no risk of misreading a
+  // recenter-button tap as user input.
+  mapContainer.value.addEventListener("pointerdown", () => {
+    if (isNavigating.value) {
       isFollowingRoute.value = false;
     }
   });
@@ -548,7 +544,7 @@ onUnmounted(() => {
 
 .nav-banner {
   position: absolute;
-  top: 0.5rem;
+  top: 3.25rem;
   left: 50%;
   transform: translateX(-50%);
   z-index: 1000;
@@ -584,6 +580,6 @@ onUnmounted(() => {
 }
 
 .nav-error {
-  top: 3.5rem;
+  top: 6.25rem;
 }
 </style>
