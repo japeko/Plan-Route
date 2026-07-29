@@ -2,7 +2,7 @@
 import L from "leaflet";
 import type { LatLngTuple } from "leaflet";
 import "leaflet/dist/leaflet.css";
-import { computed, onMounted, onUnmounted, ref, watch } from "vue";
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import type { GasStationPoi, GeoLineString, PointOfInterest } from "@poi/shared";
 import { fetchPoisAlongRoute } from "@/api/poi.api";
 import {
@@ -55,6 +55,25 @@ let poiLayer: L.LayerGroup | null = null;
 let routeLayer: L.LayerGroup | null = null;
 let vehicleMarker: L.Marker | null = null;
 let stopWatchingPosition: (() => void) | null = null;
+
+function handleViewportResize(): void {
+  map?.invalidateSize();
+}
+
+// Starting/stopping navigation hides/reveals the sidebar on mobile
+// (.sidebar--nav-hidden in App.vue), which changes .map-area's actual
+// size without the browser window itself resizing — so the resize/
+// orientationchange listeners above never fire for it, and Leaflet keeps
+// rendering at its stale cached size, leaving grey space where the map
+// pane just grew. Wait for Vue's DOM patch (nextTick) and one more frame
+// for the resulting layout reflow to actually land before re-measuring.
+function invalidateMapSizeAfterLayoutChange(): void {
+  void nextTick(() => {
+    requestAnimationFrame(() => {
+      map?.invalidateSize();
+    });
+  });
+}
 
 function stationFillColor(poi: GasStationPoi): string {
   if (poi.hasGasoline && poi.hasElectricCharging) {
@@ -201,6 +220,7 @@ function stopNavigation(): void {
   vehicleMarker = null;
   stopSpeaking();
   emit("navigating", false);
+  invalidateMapSizeAfterLayoutChange();
 
   if (map && props.route) {
     map.fitBounds(L.latLngBounds(props.route.path), { padding: [32, 32] });
@@ -249,6 +269,7 @@ function startNavigation(): void {
 
   isNavigating.value = true;
   emit("navigating", true);
+  invalidateMapSizeAfterLayoutChange();
 }
 
 function toggleNavigation(): void {
@@ -312,6 +333,17 @@ onMounted(() => {
   poiLayer = L.layerGroup().addTo(map);
   routeLayer = L.layerGroup().addTo(map);
 
+  // Leaflet caches the container's pixel size at creation time; if it
+  // changes afterward (mobile browser chrome showing/hiding, orientation
+  // change, or any layout settling shortly after mount) the map keeps
+  // rendering at the stale size, leaving grey space rather than filling
+  // the container. Recomputing on resize/orientation change, plus once
+  // more on the next frame to catch late mount-time settling, keeps it
+  // in sync.
+  window.addEventListener("resize", handleViewportResize);
+  window.addEventListener("orientationchange", handleViewportResize);
+  requestAnimationFrame(handleViewportResize);
+
   // A real finger/mouse press starting on the map itself is the signal to
   // stop auto-recentering — unlike Leaflet's own movestart/zoomstart
   // events, this can never be triggered by our own programmatic
@@ -356,6 +388,8 @@ onUnmounted(() => {
   stopWatchingPosition?.();
   stopSpeaking();
   stopCompass();
+  window.removeEventListener("resize", handleViewportResize);
+  window.removeEventListener("orientationchange", handleViewportResize);
   map?.remove();
   map = null;
 });
