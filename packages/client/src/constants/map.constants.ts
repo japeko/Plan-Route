@@ -18,5 +18,16 @@ export const OSM_TILE_LAYER_ATTRIBUTION =
 // While live-navigating, the map follows the vehicle and shows roughly
 // this much of the upcoming road ahead, rather than the whole route.
 // Smaller = more zoomed in (roads/street names easier to read), at the
-// cost of seeing fewer upcoming turns at a glance.
-export const NAVIGATION_VIEW_DISTANCE_METERS = 500;
+// cost of seeing fewer upcoming turns at a glance. Scaled by the map
+// pane's actual pixel width (see navigationViewDistanceMeters in
+// navigation.service.ts) between these two values, rather than fixed —
+// a laptop's much wider map pane can show more road ahead at the same
+// effective zoom that a phone needs this tight to stay readable.
+export const NAVIGATION_VIEW_DISTANCE_MIN_METERS = 500;
+export const NAVIGATION_VIEW_DISTANCE_MAX_METERS = 2000;
+
+// Map-pane pixel widths the min/max distances above are calibrated
+// against — roughly a phone's full-width portrait viewport vs. a
+// laptop's map pane (window width minus the ~320px sidebar).
+export const NAVIGATION_VIEW_REFERENCE_MIN_WIDTH_PX = 400;
+export const NAVIGATION_VIEW_REFERENCE_MAX_WIDTH_PX = 1400;

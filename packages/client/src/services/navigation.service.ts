@@ -1,5 +1,11 @@
 import L from "leaflet";
 import type { LatLngTuple } from "leaflet";
+import {
+  NAVIGATION_VIEW_DISTANCE_MAX_METERS,
+  NAVIGATION_VIEW_DISTANCE_MIN_METERS,
+  NAVIGATION_VIEW_REFERENCE_MAX_WIDTH_PX,
+  NAVIGATION_VIEW_REFERENCE_MIN_WIDTH_PX,
+} from "@/constants/map.constants";
 import type { NavigationStep } from "@/types/route.types";
 
 export class GeolocationError extends Error {
@@ -23,6 +29,23 @@ const STEP_ADVANCE_THRESHOLD_METERS = 40;
 
 export function distanceMeters(a: LatLngTuple, b: LatLngTuple): number {
   return L.latLng(a).distanceTo(L.latLng(b));
+}
+
+// Scales the navigation look-ahead distance linearly with the map pane's
+// pixel width (clamped to the reference range), so a laptop's much wider
+// pane shows more upcoming road while a phone stays tightly zoomed in.
+export function navigationViewDistanceMeters(mapPaneWidthPx: number): number {
+  const clampedWidth = Math.min(
+    Math.max(mapPaneWidthPx, NAVIGATION_VIEW_REFERENCE_MIN_WIDTH_PX),
+    NAVIGATION_VIEW_REFERENCE_MAX_WIDTH_PX,
+  );
+  const t =
+    (clampedWidth - NAVIGATION_VIEW_REFERENCE_MIN_WIDTH_PX) /
+    (NAVIGATION_VIEW_REFERENCE_MAX_WIDTH_PX - NAVIGATION_VIEW_REFERENCE_MIN_WIDTH_PX);
+
+  return Math.round(
+    NAVIGATION_VIEW_DISTANCE_MIN_METERS + t * (NAVIGATION_VIEW_DISTANCE_MAX_METERS - NAVIGATION_VIEW_DISTANCE_MIN_METERS),
+  );
 }
 
 // One-shot position fetch (unlike watchVehiclePosition's continuous

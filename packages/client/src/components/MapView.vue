@@ -10,7 +10,6 @@ import {
   FINLAND_CENTER,
   FINLAND_DEFAULT_ZOOM,
   FINLAND_MIN_ZOOM,
-  NAVIGATION_VIEW_DISTANCE_METERS,
   OSM_TILE_LAYER_ATTRIBUTION,
   OSM_TILE_LAYER_URL,
 } from "@/constants/map.constants";
@@ -19,6 +18,7 @@ import {
   GeolocationError,
   distanceMeters,
   findNearestPathIndex,
+  navigationViewDistanceMeters,
   resolveCurrentStepIndex,
   sliceUpcomingPath,
   watchVehiclePosition,
@@ -178,7 +178,8 @@ function centerOnUpcomingRoute(position: LatLngTuple): void {
   // fitBounds would otherwise have to stretch to cover both, zooming out
   // instead of in. The vehicle marker still uses the real position.
   const snappedPosition = props.route.path[nearestIndex] ?? position;
-  const upcoming = sliceUpcomingPath(props.route.path, nearestIndex, NAVIGATION_VIEW_DISTANCE_METERS);
+  const viewDistanceMeters = navigationViewDistanceMeters(map.getSize().x);
+  const upcoming = sliceUpcomingPath(props.route.path, nearestIndex, viewDistanceMeters);
   map.fitBounds(L.latLngBounds([snappedPosition, ...upcoming]), { padding: [40, 40] });
 }
 
