@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref } from "vue";
-import { geocodeAddressInFinland } from "@/services/geocoding.service";
+import { geocodeAddressInFinland, reverseGeocode } from "@/services/geocoding.service";
+import { GeolocationError, getCurrentPosition } from "@/services/navigation.service";
 import { fetchRoadTrip } from "@/services/routing.service";
 import { currentLanguage } from "@/services/speech.service";
 import type { GeocodedPoint, NavigationStep, RoutePlan } from "@/types/route.types";
@@ -16,6 +17,11 @@ const endAddress = ref("");
 const viaAddresses = ref<string[]>([]);
 const isPlanning = ref(false);
 const errorMessage = ref<string | null>(null);
+// Set when "Use my current location" resolves, so planRoute() can use the
+// exact GPS fix directly instead of re-geocoding the address text (which
+// would just approximate it back from the reverse-geocoded label).
+const startOverride = ref<GeocodedPoint | null>(null);
+const isLocating = ref(false);
 const summary = ref<{ distanceKm: string; duration: string } | null>(null);
 const wasReordered = ref(false);
 const directions = ref<NavigationStep[]>([]);
@@ -29,6 +35,31 @@ function removeStop(index: number): void {
   viaAddresses.value.splice(index, 1);
 }
 
+function clearStartOverride(): void {
+  startOverride.value = null;
+}
+
+async function useCurrentLocationAsStart(): Promise<void> {
+  errorMessage.value = null;
+  isLocating.value = true;
+  try {
+    const position = await getCurrentPosition();
+    // A reverse-geocode failure shouldn't block using the GPS fix itself
+    // — fall back to a generic label rather than losing the position.
+    const label = await reverseGeocode(position)
+      .then((result) => result.label)
+      .catch(() => "Current location");
+
+    startOverride.value = { label, position };
+    startAddress.value = label;
+  } catch (err) {
+    errorMessage.value =
+      err instanceof GeolocationError ? err.message : "Failed to get your current location.";
+  } finally {
+    isLocating.value = false;
+  }
+}
+
 async function planRoute(): Promise<void> {
   errorMessage.value = null;
 
@@ -39,10 +70,18 @@ async function planRoute(): Promise<void> {
 
   const viaEntries = viaAddresses.value.map((address) => address.trim()).filter((address) => address.length > 0);
   const addresses = [startAddress.value, ...viaEntries, endAddress.value];
+  // Captured once rather than read inside the map callback, so a later
+  // reassignment (e.g. clearRoute()) can't retroactively change which
+  // stop this planRoute() call resolves.
+  const startOverridePoint = startOverride.value;
 
   isPlanning.value = true;
   try {
-    const geocoded = await Promise.all(addresses.map((address) => geocodeAddressInFinland(address)));
+    const geocoded = await Promise.all(
+      addresses.map((address, index) =>
+        index === 0 && startOverridePoint ? startOverridePoint : geocodeAddressInFinland(address),
+      ),
+    );
     const trip = await fetchRoadTrip(geocoded.map((stop) => stop.position));
 
     const orderedStops = trip.visitOrder
@@ -95,6 +134,7 @@ async function planRoute(): Promise<void> {
 
 function clearRoute(): void {
   startAddress.value = "";
+  startOverride.value = null;
   endAddress.value = "";
   viaAddresses.value = [];
   summary.value = null;
@@ -113,12 +153,24 @@ function clearRoute(): void {
   >
     <div class="field">
       <label for="start-address">Start address</label>
-      <input
-        id="start-address"
-        v-model="startAddress"
-        type="text"
-        placeholder="e.g. Mannerheimintie 1, Helsinki"
-      >
+      <div class="start-row">
+        <input
+          id="start-address"
+          v-model="startAddress"
+          type="text"
+          placeholder="e.g. Mannerheimintie 1, Helsinki"
+          @input="clearStartOverride"
+        >
+        <button
+          type="button"
+          class="use-location"
+          title="Use my current location"
+          :disabled="isLocating"
+          @click="useCurrentLocationAsStart"
+        >
+          {{ isLocating ? "Locating…" : "📍" }}
+        </button>
+      </div>
     </div>
 
     <div
@@ -269,6 +321,28 @@ input {
   color: #495057;
   font-size: 1.1rem;
   line-height: 1;
+  cursor: pointer;
+}
+
+.start-row {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.start-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.use-location {
+  flex-shrink: 0;
+  padding: 0 0.6rem;
+  border: 1px solid #ced4da;
+  border-radius: 4px;
+  background: #f8f9fa;
+  color: #495057;
+  font-size: 0.9rem;
+  white-space: nowrap;
   cursor: pointer;
 }
 

@@ -4,6 +4,7 @@ export const POI_API_BASE_URL = "/api/pois";
 // and intended for light/dev use. Swap for a self-hosted or paid provider
 // (Mapbox, HERE, OpenRouteService) before any production traffic.
 export const NOMINATIM_SEARCH_URL = "https://nominatim.openstreetmap.org/search";
+export const NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/reverse";
 // The Trip service (not Route) solves for the shortest path visiting all
 // stops with a fixed start/end, reordering pass-by stops as needed —
 // Route would instead force them in whatever order they were typed,

@@ -25,6 +25,24 @@ export function distanceMeters(a: LatLngTuple, b: LatLngTuple): number {
   return L.latLng(a).distanceTo(L.latLng(b));
 }
 
+// One-shot position fetch (unlike watchVehiclePosition's continuous
+// tracking) — for "use my current location" as a route stop, not live
+// navigation.
+export function getCurrentPosition(): Promise<LatLngTuple> {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new GeolocationError("Geolocation is not supported by this browser."));
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      (position) => resolve([position.coords.latitude, position.coords.longitude]),
+      (error) => reject(new GeolocationError(error.message, error.code)),
+      { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
+    );
+  });
+}
+
 export function watchVehiclePosition(
   onUpdate: (position: LatLngTuple) => void,
   onError: (error: GeolocationError) => void,
