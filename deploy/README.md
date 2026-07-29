@@ -69,21 +69,51 @@ request. The client is served at `https://<DOMAIN>/`, the API at
 `https://<DOMAIN>/api/*`, and the Mongo admin UI at `https://<DOMAIN>/db/`
 (prompts for `MONGO_EXPRESS_USERNAME`/`PASSWORD`).
 
-## 4. Shipping an update
+## 4. Updating the client/server images
+
+For an ordinary code change (nothing in `deploy/docker-compose.yml` or
+`.env` needs to change), the best-practice update only touches the two
+services whose images actually changed — `mongo`, `mongo-express`, and
+`traefik` are left running untouched:
+
+On your dev machine:
 
 ```bash
-GITHUB_OWNER=your-github-username pnpm release   # on your dev machine
+GITHUB_OWNER=your-github-username pnpm release
 ```
 
-Then on the host:
+This rebuilds and pushes both `poi-client` and `poi-server`, tagged with
+the current git commit hash and `latest`. See `scripts/release-images.sh`
+for details.
+
+On the host:
 
 ```bash
-docker compose pull
-docker compose up -d
+cd ~/poi-app
+docker compose pull client server
+docker compose up -d client server
 ```
 
-To deploy a specific past build instead of `latest`, set `IMAGE_TAG` in `.env`
-to the git commit hash printed by `pnpm release`.
+Scoping `pull`/`up -d` to just `client server` avoids recreating the other
+containers for no reason, and keeps the brief restart to exactly the two
+that changed. (If you *did* change `docker-compose.yml` or `.env` — a new
+env var, a new service — run the plain `docker compose pull && docker
+compose up -d` from step 3 instead, so every affected service picks it up.)
+
+Roll back to a specific previous build by setting `IMAGE_TAG` in `.env` to
+the git commit hash printed by `pnpm release` (older tags are also listed
+under your GitHub account's Packages tab), then repeat the `pull`/`up -d`
+above.
+
+Verify the update landed:
+
+```bash
+docker compose logs client --tail=20
+docker compose logs server --tail=20
+```
+
+and hard-refresh `https://<DOMAIN>/` in the browser to bypass any cached
+client bundle.
 
 ## 5. Populating Mongo on the host
 

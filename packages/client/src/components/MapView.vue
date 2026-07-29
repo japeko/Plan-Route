@@ -34,6 +34,7 @@ const mapContainer = ref<HTMLDivElement | null>(null);
 const errorMessage = ref<string | null>(null);
 
 const isNavigating = ref(false);
+const isFollowingRoute = ref(true);
 const vehiclePosition = ref<LatLngTuple | null>(null);
 const currentStepIndex = ref(0);
 const navError = ref<string | null>(null);
@@ -53,6 +54,10 @@ let poiLayer: L.LayerGroup | null = null;
 let routeLayer: L.LayerGroup | null = null;
 let vehicleMarker: L.Marker | null = null;
 let stopWatchingPosition: (() => void) | null = null;
+// Set around every programmatic map move (fitBounds while auto-centering)
+// so the movestart listener below can tell those apart from a real user
+// drag/zoom, which is the only case that should drop route-following.
+let isAutoCentering = false;
 
 function stationFillColor(poi: GasStationPoi): string {
   if (poi.hasGasoline && poi.hasElectricCharging) {
@@ -166,7 +171,16 @@ function centerOnUpcomingRoute(position: LatLngTuple): void {
   // instead of in. The vehicle marker still uses the real position.
   const snappedPosition = props.route.path[nearestIndex] ?? position;
   const upcoming = sliceUpcomingPath(props.route.path, nearestIndex, NAVIGATION_VIEW_DISTANCE_METERS);
+  isAutoCentering = true;
   map.fitBounds(L.latLngBounds([snappedPosition, ...upcoming]), { padding: [40, 40] });
+  isAutoCentering = false;
+}
+
+function recenterNavigation(): void {
+  isFollowingRoute.value = true;
+  if (vehiclePosition.value) {
+    centerOnUpcomingRoute(vehiclePosition.value);
+  }
 }
 
 function stopNavigation(): void {
@@ -191,6 +205,7 @@ function startNavigation(): void {
   }
   navError.value = null;
   currentStepIndex.value = 0;
+  isFollowingRoute.value = true;
 
   stopWatchingPosition = watchVehiclePosition(
     (position) => {
@@ -207,7 +222,9 @@ function startNavigation(): void {
         currentStepIndex.value = resolveCurrentStepIndex(props.route.steps, position, currentStepIndex.value);
       }
 
-      centerOnUpcomingRoute(position);
+      if (isFollowingRoute.value) {
+        centerOnUpcomingRoute(position);
+      }
     },
     (error: GeolocationError) => {
       navError.value = error.message;
@@ -281,6 +298,16 @@ onMounted(() => {
 
   poiLayer = L.layerGroup().addTo(map);
   routeLayer = L.layerGroup().addTo(map);
+
+  // Any view change while navigating that we didn't trigger ourselves (see
+  // isAutoCentering) is the user dragging or zooming the map — stop
+  // auto-recentering until they explicitly ask to resume via the
+  // recenter button.
+  map.on("movestart", () => {
+    if (isNavigating.value && !isAutoCentering) {
+      isFollowingRoute.value = false;
+    }
+  });
 
   watch(() => props.route, renderRoute);
   watch([() => props.route, () => props.filters], refreshPoisAlongRoute, { deep: true });
@@ -362,6 +389,14 @@ onUnmounted(() => {
       @click="toggleNavigation"
     >
       {{ isNavigating ? "Stop navigation" : "Start navigation" }}
+    </button>
+    <button
+      v-if="isNavigating && !isFollowingRoute"
+      type="button"
+      class="recenter-button"
+      @click="recenterNavigation"
+    >
+      Recenter
     </button>
     <div
       v-if="isNavigating && currentStep"
@@ -488,6 +523,22 @@ onUnmounted(() => {
   border: none;
   border-radius: 6px;
   background: #e64980;
+  color: white;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.recenter-button {
+  position: absolute;
+  bottom: 1.5rem;
+  right: 0.5rem;
+  z-index: 1000;
+  padding: 0.5rem 0.9rem;
+  border: none;
+  border-radius: 6px;
+  background: #1c7ed6;
   color: white;
   font-size: 0.85rem;
   font-weight: 600;
