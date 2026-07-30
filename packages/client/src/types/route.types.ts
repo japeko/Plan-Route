@@ -41,3 +41,14 @@ export interface RoutePlan {
 }
 
 export type PoiFilterOptions = Omit<PoiAlongRouteRequestDto, "route">;
+
+// Merges Fintraffic's official roadworks with our own user-reported
+// entries into one shape for map display — "official" ones are read-only
+// (fetched live, never stored by us), "user_reported" ones can be removed
+// via the API (see constructionZone.api.ts).
+export interface ConstructionZone {
+  id: string;
+  position: LatLngTuple;
+  description: string;
+  source: "official" | "user_reported";
+}

@@ -4,6 +4,7 @@ import type { LatLngTuple } from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from "vue";
 import type { GasStationPoi, GeoLineString, PointOfInterest } from "@poi/shared";
+import { fetchConstructionZoneReportsAlongRoute, removeConstructionZoneReport, reportConstructionZone } from "@/api/constructionZone.api";
 import { fetchPoisAlongRoute } from "@/api/poi.api";
 import {
   FINLAND_BOUNDS,
@@ -24,8 +25,10 @@ import {
   watchVehiclePosition,
 } from "@/services/navigation.service";
 import { compassError, heading, startCompass, stopCompass } from "@/services/compass.service";
+import type { BoundingBox } from "@/services/digitraffic.service";
+import { fetchOfficialRoadworks } from "@/services/digitraffic.service";
 import { currentLanguage, speak, stopSpeaking } from "@/services/speech.service";
-import type { PoiFilterOptions, RoutePlan } from "@/types/route.types";
+import type { ConstructionZone, PoiFilterOptions, RoutePlan } from "@/types/route.types";
 import { formatDistance } from "@/utils/format";
 
 const props = defineProps<{ route: RoutePlan | null; filters: PoiFilterOptions }>();
@@ -40,6 +43,8 @@ const vehiclePosition = ref<LatLngTuple | null>(null);
 const vehicleSpeedKmh = ref<number | null>(null);
 const currentStepIndex = ref(0);
 const navError = ref<string | null>(null);
+const isReportingZone = ref(false);
+const zoneReportError = ref<string | null>(null);
 
 // Gated on vehiclePosition, not just route: currentStepIndex defaults to 0,
 // so without this the banner would show step 0's instruction as soon as
@@ -54,6 +59,8 @@ const distanceToNextStep = computed(() =>
 let map: L.Map | null = null;
 let poiLayer: L.LayerGroup | null = null;
 let routeLayer: L.LayerGroup | null = null;
+let constructionZoneLayer: L.LayerGroup | null = null;
+let pendingZoneReportClickHandler: ((event: L.LeafletMouseEvent) => void) | null = null;
 let vehicleMarker: L.Marker | null = null;
 let stopWatchingPosition: (() => void) | null = null;
 
@@ -179,6 +186,125 @@ async function refreshPoisAlongRoute(): Promise<void> {
   } catch {
     errorMessage.value = "Failed to load points of interest along the route.";
   }
+}
+
+function constructionZoneIcon(): L.DivIcon {
+  return L.divIcon({
+    className: "construction-zone-marker",
+    html: `<span>🚧</span>`,
+    iconSize: [24, 24],
+    iconAnchor: [12, 20],
+  });
+}
+
+function constructionZonePopupContent(zone: ConstructionZone): HTMLElement {
+  const container = document.createElement("div");
+  const sourceLabel = zone.source === "official" ? "Official (Fintraffic)" : "User-reported";
+  container.innerHTML = `<strong>Road work</strong><br>${zone.description}<br><em>${sourceLabel}</em>`;
+
+  if (zone.source === "user_reported") {
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "popup-remove-zone";
+    removeButton.textContent = "Remove report";
+    removeButton.addEventListener("click", () => {
+      removeConstructionZoneReport(zone.id)
+        .then(() => refreshConstructionZones())
+        .catch(() => {
+          zoneReportError.value = "Failed to remove the report.";
+        });
+      map?.closePopup();
+    });
+    container.appendChild(removeButton);
+  }
+
+  return container;
+}
+
+// Bounding box rather than the tighter route-corridor buffer used for
+// POIs: roadwork markers are sparse enough nationally that this coarser
+// filter (and the resulting occasional extra marker just outside the
+// route) is a reasonable simplification, avoiding a server round-trip
+// just for the official/read-only half of this feature.
+function routeBoundingBox(route: RoutePlan): BoundingBox {
+  const bounds = L.latLngBounds(route.path).pad(0.1);
+  return {
+    minLat: bounds.getSouth(),
+    maxLat: bounds.getNorth(),
+    minLng: bounds.getWest(),
+    maxLng: bounds.getEast(),
+  };
+}
+
+async function refreshConstructionZones(): Promise<void> {
+  if (!constructionZoneLayer) {
+    return;
+  }
+
+  if (!props.route) {
+    constructionZoneLayer.clearLayers();
+    return;
+  }
+
+  const route = props.route;
+  const [officialResult, reportedResult] = await Promise.allSettled([
+    fetchOfficialRoadworks(routeBoundingBox(route)),
+    fetchConstructionZoneReportsAlongRoute(routeToGeoLineString(route)),
+  ]);
+
+  const zones: ConstructionZone[] = [];
+  if (officialResult.status === "fulfilled") {
+    zones.push(...officialResult.value);
+  }
+  if (reportedResult.status === "fulfilled") {
+    zones.push(
+      ...reportedResult.value.map(
+        (report): ConstructionZone => ({
+          id: report.id,
+          position: [report.location.coordinates[1], report.location.coordinates[0]],
+          description: "User-reported road work",
+          source: "user_reported",
+        }),
+      ),
+    );
+  }
+
+  constructionZoneLayer.clearLayers();
+  for (const zone of zones) {
+    L.marker(zone.position, { icon: constructionZoneIcon() })
+      .bindPopup(constructionZonePopupContent(zone))
+      .addTo(constructionZoneLayer);
+  }
+}
+
+function toggleReportingZone(): void {
+  if (!map) {
+    return;
+  }
+
+  if (isReportingZone.value) {
+    if (pendingZoneReportClickHandler) {
+      map.off("click", pendingZoneReportClickHandler);
+      pendingZoneReportClickHandler = null;
+    }
+    isReportingZone.value = false;
+    return;
+  }
+
+  isReportingZone.value = true;
+  zoneReportError.value = null;
+  pendingZoneReportClickHandler = (event: L.LeafletMouseEvent) => {
+    isReportingZone.value = false;
+    pendingZoneReportClickHandler = null;
+    reportConstructionZone({
+      location: { type: "Point", coordinates: [event.latlng.lng, event.latlng.lat] },
+    })
+      .then(() => refreshConstructionZones())
+      .catch(() => {
+        zoneReportError.value = "Failed to report the construction zone.";
+      });
+  };
+  map.once("click", pendingZoneReportClickHandler);
 }
 
 function startEndIcon(kind: "start" | "end"): L.DivIcon {
@@ -356,6 +482,7 @@ onMounted(() => {
 
   poiLayer = L.layerGroup().addTo(map);
   routeLayer = L.layerGroup().addTo(map);
+  constructionZoneLayer = L.layerGroup().addTo(map);
 
   // Leaflet caches the container's pixel size at creation time; if it
   // changes afterward (mobile browser chrome showing/hiding, orientation
@@ -382,6 +509,7 @@ onMounted(() => {
 
   watch(() => props.route, renderRoute);
   watch([() => props.route, () => props.filters], refreshPoisAlongRoute, { deep: true });
+  watch(() => props.route, refreshConstructionZones);
   // currentStep changes each time currentStepIndex advances to a new
   // maneuver, so this fires exactly once per turn rather than on every
   // GPS update.
@@ -481,6 +609,7 @@ onUnmounted(() => {
           style="background: #795548"
         />Camping area
       </div>
+      <div>🚧 Road work</div>
     </div>
     <p
       v-if="errorMessage"
@@ -497,6 +626,21 @@ onUnmounted(() => {
     >
       {{ isNavigating ? "Stop navigation" : "Start navigation" }}
     </button>
+    <button
+      v-if="route"
+      type="button"
+      class="report-zone-toggle"
+      :class="{ 'report-zone-toggle--active': isReportingZone }"
+      @click="toggleReportingZone"
+    >
+      {{ isReportingZone ? "Tap map to report…" : "🚧 Report road work" }}
+    </button>
+    <p
+      v-if="zoneReportError"
+      class="map-error zone-report-error"
+    >
+      {{ zoneReportError }}
+    </p>
     <button
       v-if="isNavigating && !isFollowingRoute"
       type="button"
@@ -584,6 +728,26 @@ onUnmounted(() => {
   border-radius: 4px;
   background: #e7f5ff;
   color: #1c7ed6;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.construction-zone-marker span {
+  display: block;
+  font-size: 1.3rem;
+  line-height: 1;
+  text-align: center;
+}
+
+.popup-remove-zone {
+  display: block;
+  margin-top: 0.5rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid #e03131;
+  border-radius: 4px;
+  background: #fff5f5;
+  color: #e03131;
   font-size: 0.8rem;
   font-weight: 600;
   cursor: pointer;
@@ -719,6 +883,34 @@ onUnmounted(() => {
   font-weight: 600;
   cursor: pointer;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+}
+
+.report-zone-toggle {
+  position: absolute;
+  top: 3.25rem;
+  right: 0.5rem;
+  z-index: 1000;
+  padding: 0.5rem 0.9rem;
+  border: none;
+  border-radius: 6px;
+  background: #f8f9fa;
+  color: #495057;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3);
+  white-space: nowrap;
+}
+
+.report-zone-toggle--active {
+  background: #fab005;
+  color: #212529;
+}
+
+.zone-report-error {
+  top: 6rem;
+  right: 0.5rem;
+  left: auto;
 }
 
 .recenter-button {

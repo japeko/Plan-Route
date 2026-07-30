@@ -2,6 +2,7 @@ import "dotenv/config";
 import cors from "cors";
 import express from "express";
 import { connectToDatabase } from "./db/connection.js";
+import { constructionZoneRouter } from "./routes/constructionZone.routes.js";
 import { poiRouter } from "./routes/poi.routes.js";
 import { errorHandlerMiddleware, notFoundMiddleware } from "./middleware/errorHandler.middleware.js";
 
@@ -19,6 +20,7 @@ async function main(): Promise<void> {
   app.use(express.json({ limit: "5mb" }));
 
   app.use("/api/pois", poiRouter);
+  app.use("/api/construction-zones", constructionZoneRouter);
 
   app.use(notFoundMiddleware);
   app.use(errorHandlerMiddleware);

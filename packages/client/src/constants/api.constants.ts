@@ -1,4 +1,8 @@
 export const POI_API_BASE_URL = "/api/pois";
+export const CONSTRUCTION_ZONE_API_BASE_URL = "/api/construction-zones";
+// Fintraffic's free, official, government roadworks feed for Finland —
+// no API key required. See https://www.digitraffic.fi/en/road-traffic/.
+export const DIGITRAFFIC_ROADWORKS_URL = "https://tie.digitraffic.fi/api/traffic-message/v2/roadworks";
 
 // Public demo/community services — no API key required, but rate-limited
 // and intended for light/dev use. Swap for a self-hosted or paid provider
