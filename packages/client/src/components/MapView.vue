@@ -100,21 +100,30 @@ function stationFillColor(poi: GasStationPoi): string {
   return poi.hasElectricCharging ? "#7048e8" : "#1971c2";
 }
 
-function poiMarkerFillColor(poi: PointOfInterest): string {
-  switch (poi.type) {
-    case "restaurant":
-      return "#e8590c";
-    case "camping":
-      return "#795548";
-    case "accommodation":
-      return "#d6336c";
-    default:
-      return stationFillColor(poi);
-  }
-}
-
+// Emoji markers read at a glance without needing the popup — used for
+// the sparser, more "destination"-like types, where a plain colored dot
+// (still used for gas stations/restaurants below) is less recognizable.
 function poiMarkerIcon(poi: PointOfInterest): L.DivIcon {
-  const fill = poiMarkerFillColor(poi);
+  if (poi.type === "camping") {
+    return L.divIcon({
+      className: "poi-emoji-marker",
+      html: `<span>⛺</span>`,
+      iconSize: [24, 24],
+      iconAnchor: [12, 20],
+    });
+  }
+  if (poi.type === "accommodation") {
+    const emoji = poi.category === "hotel" ? "🏨" : "🛌";
+    return L.divIcon({
+      className: "poi-emoji-marker",
+      html: `<span>${emoji}</span>`,
+      iconSize: [24, 24],
+      iconAnchor: [12, 20],
+    });
+  }
+
+  // poi is narrowed to GasStationPoi | RestaurantPoi here.
+  const fill = poi.type === "restaurant" ? "#e8590c" : stationFillColor(poi);
   const border = poi.type === "gas_station" && poi.hasRestaurant ? "#f59f00" : "#ffffff";
   return L.divIcon({
     className: "poi-marker",
@@ -639,18 +648,9 @@ onUnmounted(() => {
           />Restaurant
         </div>
         <div><span class="dot ring" />Station has a restaurant</div>
-        <div>
-          <span
-            class="dot"
-            style="background: #795548"
-          />Camping area
-        </div>
-        <div>
-          <span
-            class="dot"
-            style="background: #d6336c"
-          />Hotel / hostel
-        </div>
+        <div>⛺ Camping area</div>
+        <div>🏨 Hotel</div>
+        <div>🛌 Hostel</div>
         <div>🚧 Road work</div>
       </template>
     </div>
@@ -776,7 +776,8 @@ onUnmounted(() => {
   cursor: pointer;
 }
 
-.construction-zone-marker span {
+.construction-zone-marker span,
+.poi-emoji-marker span {
   display: block;
   font-size: 1.3rem;
   line-height: 1;
