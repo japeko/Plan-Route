@@ -1027,6 +1027,17 @@ onUnmounted(() => {
   max-width: min(80%, 480px);
 }
 
+/* On a narrow screen, max-width's 80% keeps the centered banner wide
+   enough to reach under the top-right nav-toggle/report-zone-toggle
+   buttons (there's plenty of horizontal room on desktop for both to
+   coexist, but not here) — drop it below both, roughly one banner-height
+   further down than its default position. */
+@media (max-width: 640px) {
+  .nav-banner {
+    top: 6.5rem;
+  }
+}
+
 .nav-arrow {
   flex-shrink: 0;
   font-size: 1.4rem;
