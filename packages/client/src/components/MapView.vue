@@ -37,6 +37,7 @@ const errorMessage = ref<string | null>(null);
 const isNavigating = ref(false);
 const isFollowingRoute = ref(true);
 const vehiclePosition = ref<LatLngTuple | null>(null);
+const vehicleSpeedKmh = ref<number | null>(null);
 const currentStepIndex = ref(0);
 const navError = ref<string | null>(null);
 
@@ -219,7 +220,7 @@ function centerOnUpcomingRoute(position: LatLngTuple): void {
   // fitBounds would otherwise have to stretch to cover both, zooming out
   // instead of in. The vehicle marker still uses the real position.
   const snappedPosition = props.route.path[nearestIndex] ?? position;
-  const viewDistanceMeters = navigationViewDistanceMeters(map.getSize().x);
+  const viewDistanceMeters = navigationViewDistanceMeters(map.getSize().x, vehicleSpeedKmh.value);
   const upcoming = sliceUpcomingPath(props.route.path, nearestIndex, viewDistanceMeters);
   map.fitBounds(L.latLngBounds([snappedPosition, ...upcoming]), { padding: [40, 40] });
 }
@@ -236,6 +237,7 @@ function stopNavigation(): void {
   stopWatchingPosition = null;
   isNavigating.value = false;
   vehiclePosition.value = null;
+  vehicleSpeedKmh.value = null;
   currentStepIndex.value = 0;
   vehicleMarker?.remove();
   vehicleMarker = null;
@@ -257,9 +259,10 @@ function startNavigation(): void {
   isFollowingRoute.value = true;
 
   stopWatchingPosition = watchVehiclePosition(
-    (position) => {
+    (position, speedKmh) => {
       navError.value = null;
       vehiclePosition.value = position;
+      vehicleSpeedKmh.value = speedKmh;
 
       if (!vehicleMarker && map) {
         vehicleMarker = L.marker(position, { icon: vehicleIcon(), zIndexOffset: 1000 }).addTo(map);

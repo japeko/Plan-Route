@@ -5,6 +5,7 @@ import {
   NAVIGATION_VIEW_DISTANCE_MIN_METERS,
   NAVIGATION_VIEW_REFERENCE_MAX_WIDTH_PX,
   NAVIGATION_VIEW_REFERENCE_MIN_WIDTH_PX,
+  SPEED_VIEW_DISTANCE_BRACKETS,
 } from "@/constants/map.constants";
 import type { NavigationStep } from "@/types/route.types";
 
@@ -31,10 +32,22 @@ export function distanceMeters(a: LatLngTuple, b: LatLngTuple): number {
   return L.latLng(a).distanceTo(L.latLng(b));
 }
 
-// Scales the navigation look-ahead distance linearly with the map pane's
-// pixel width (clamped to the reference range), so a laptop's much wider
-// pane shows more upcoming road while a phone stays tightly zoomed in.
-export function navigationViewDistanceMeters(mapPaneWidthPx: number): number {
+// Step function, not continuous: the multiplier stays fixed within a
+// speed bracket and only changes when crossing into the next one, so the
+// view doesn't creep in/out with every small GPS speed fluctuation.
+function speedViewDistanceMultiplier(speedKmh: number | null): number {
+  if (speedKmh === null) {
+    return SPEED_VIEW_DISTANCE_BRACKETS[0]?.multiplier ?? 1;
+  }
+  const bracket = SPEED_VIEW_DISTANCE_BRACKETS.find(({ maxKmh }) => speedKmh <= maxKmh);
+  return bracket?.multiplier ?? 1;
+}
+
+// Scales the navigation look-ahead distance by both the map pane's pixel
+// width (clamped to the reference range — a laptop's much wider pane
+// shows more upcoming road while a phone stays tightly zoomed in) and the
+// vehicle's current speed (faster travel needs more road visible ahead).
+export function navigationViewDistanceMeters(mapPaneWidthPx: number, speedKmh: number | null): number {
   const clampedWidth = Math.min(
     Math.max(mapPaneWidthPx, NAVIGATION_VIEW_REFERENCE_MIN_WIDTH_PX),
     NAVIGATION_VIEW_REFERENCE_MAX_WIDTH_PX,
@@ -43,9 +56,14 @@ export function navigationViewDistanceMeters(mapPaneWidthPx: number): number {
     (clampedWidth - NAVIGATION_VIEW_REFERENCE_MIN_WIDTH_PX) /
     (NAVIGATION_VIEW_REFERENCE_MAX_WIDTH_PX - NAVIGATION_VIEW_REFERENCE_MIN_WIDTH_PX);
 
-  return Math.round(
-    NAVIGATION_VIEW_DISTANCE_MIN_METERS + t * (NAVIGATION_VIEW_DISTANCE_MAX_METERS - NAVIGATION_VIEW_DISTANCE_MIN_METERS),
-  );
+  const baseDistance =
+    NAVIGATION_VIEW_DISTANCE_MIN_METERS + t * (NAVIGATION_VIEW_DISTANCE_MAX_METERS - NAVIGATION_VIEW_DISTANCE_MIN_METERS);
+
+  return Math.round(baseDistance * speedViewDistanceMultiplier(speedKmh));
+}
+
+function speedKmhFromCoords(coords: GeolocationCoordinates): number | null {
+  return coords.speed !== null ? coords.speed * 3.6 : null;
 }
 
 // One-shot position fetch (unlike watchVehiclePosition's continuous
@@ -67,7 +85,7 @@ export function getCurrentPosition(): Promise<LatLngTuple> {
 }
 
 export function watchVehiclePosition(
-  onUpdate: (position: LatLngTuple) => void,
+  onUpdate: (position: LatLngTuple, speedKmh: number | null) => void,
   onError: (error: GeolocationError) => void,
 ): () => void {
   if (!navigator.geolocation) {
@@ -76,7 +94,8 @@ export function watchVehiclePosition(
   }
 
   const watchId = navigator.geolocation.watchPosition(
-    (position) => onUpdate([position.coords.latitude, position.coords.longitude]),
+    (position) =>
+      onUpdate([position.coords.latitude, position.coords.longitude], speedKmhFromCoords(position.coords)),
     (error) => onError(new GeolocationError(error.message, error.code)),
     { enableHighAccuracy: true, maximumAge: 5000, timeout: 15000 },
   );

@@ -31,3 +31,19 @@ export const NAVIGATION_VIEW_DISTANCE_MAX_METERS = 2000;
 // laptop's map pane (window width minus the ~320px sidebar).
 export const NAVIGATION_VIEW_REFERENCE_MIN_WIDTH_PX = 400;
 export const NAVIGATION_VIEW_REFERENCE_MAX_WIDTH_PX = 1400;
+
+// The view also scales with vehicle speed — faster travel needs more
+// upcoming road visible (longer stopping/reaction distance, turns approach
+// faster), on top of the screen-size scaling above. A step function
+// rather than continuous: the view stays fixed within a bracket and only
+// changes when speed crosses into the next one, so it doesn't creep
+// in/out constantly with every small speed fluctuation. maxKmh is the
+// upper (inclusive) bound of each bracket; the last entry's Infinity
+// catches everything above the second-to-last bound.
+export const SPEED_VIEW_DISTANCE_BRACKETS: { maxKmh: number; multiplier: number }[] = [
+  { maxKmh: 50, multiplier: 1 },
+  { maxKmh: 70, multiplier: 1.3 },
+  { maxKmh: 90, multiplier: 1.6 },
+  { maxKmh: 110, multiplier: 2 },
+  { maxKmh: Infinity, multiplier: 2.5 },
+];
