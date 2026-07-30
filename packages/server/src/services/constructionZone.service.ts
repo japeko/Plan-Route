@@ -1,5 +1,12 @@
 import * as turf from "@turf/turf";
-import type { ConstructionZoneReport, ConstructionZonesAlongRouteRequestDto, CreateConstructionZoneReportDto } from "@poi/shared";
+import {
+  CONSTRUCTION_ZONE_REPORT_MIN_DISTANCE_METERS,
+  type ConstructionZoneReport,
+  type ConstructionZonesAlongRouteRequestDto,
+  type CreateConstructionZoneReportDto,
+} from "@poi/shared";
+import { HttpError } from "../errors/HttpError.js";
+import { CONSTRUCTION_ZONE_ERROR_MESSAGES } from "../constants/errorMessages.constants.js";
 import { ConstructionZoneReportModel } from "../models/constructionZoneReport.model.js";
 import { CONSTRUCTION_ZONE_REPORT_PROJECTION } from "../constants/constructionZone.constants.js";
 
@@ -42,6 +49,23 @@ export async function listConstructionZoneReportsAlongRoute(
 export async function createConstructionZoneReport(
   dto: CreateConstructionZoneReportDto,
 ): Promise<ConstructionZoneReport> {
+  // Without this, two different users reporting the same real-world
+  // road work from slightly different spots (or the same user tapping
+  // twice) would each create their own marker rather than being treated
+  // as the same incident.
+  const existingNearby = await ConstructionZoneReportModel.findOne({
+    location: {
+      $nearSphere: {
+        $geometry: dto.location,
+        $maxDistance: CONSTRUCTION_ZONE_REPORT_MIN_DISTANCE_METERS,
+      },
+    },
+  }).lean();
+
+  if (existingNearby) {
+    throw new HttpError(409, CONSTRUCTION_ZONE_ERROR_MESSAGES.TOO_CLOSE_TO_EXISTING);
+  }
+
   const doc = await ConstructionZoneReportModel.create({ location: dto.location });
   return toConstructionZoneReport(doc.toObject() as unknown as LeanConstructionZoneReportDocument);
 }

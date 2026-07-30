@@ -337,8 +337,8 @@ function toggleReportingZone(): void {
       location: { type: "Point", coordinates: [event.latlng.lng, event.latlng.lat] },
     })
       .then(() => refreshConstructionZones())
-      .catch(() => {
-        zoneReportError.value = "Failed to report the construction zone.";
+      .catch((err: unknown) => {
+        zoneReportError.value = err instanceof Error ? err.message : "Failed to report the construction zone.";
       });
   };
   map.once("click", pendingZoneReportClickHandler);

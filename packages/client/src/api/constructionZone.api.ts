@@ -9,6 +9,18 @@ import { CONSTRUCTION_ZONE_API_BASE_URL } from "@/constants/api.constants";
 
 export class ConstructionZoneApiError extends Error {}
 
+// The server sends a specific, meaningful message (e.g. "A road work
+// report already exists near this location") as { message } — prefer
+// that over a generic status-code string whenever it's present.
+async function errorMessageFrom(response: Response, fallback: string): Promise<string> {
+  try {
+    const body = (await response.json()) as { message?: string };
+    return body.message ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export async function fetchConstructionZoneReportsAlongRoute(
   route: GeoLineString,
 ): Promise<ConstructionZoneReport[]> {
@@ -24,7 +36,9 @@ export async function fetchConstructionZoneReportsAlongRoute(
   });
 
   if (!response.ok) {
-    throw new ConstructionZoneApiError(`Failed to fetch construction zone reports (status ${response.status}).`);
+    throw new ConstructionZoneApiError(
+      await errorMessageFrom(response, `Failed to fetch construction zone reports (status ${response.status}).`),
+    );
   }
 
   return (await response.json()) as ConstructionZoneReport[];
@@ -38,7 +52,9 @@ export async function reportConstructionZone(dto: CreateConstructionZoneReportDt
   });
 
   if (!response.ok) {
-    throw new ConstructionZoneApiError(`Failed to report construction zone (status ${response.status}).`);
+    throw new ConstructionZoneApiError(
+      await errorMessageFrom(response, `Failed to report construction zone (status ${response.status}).`),
+    );
   }
 
   return (await response.json()) as ConstructionZoneReport;
@@ -48,6 +64,8 @@ export async function removeConstructionZoneReport(id: string): Promise<void> {
   const response = await fetch(`${CONSTRUCTION_ZONE_API_BASE_URL}/${id}`, { method: "DELETE" });
 
   if (!response.ok) {
-    throw new ConstructionZoneApiError(`Failed to remove construction zone report (status ${response.status}).`);
+    throw new ConstructionZoneApiError(
+      await errorMessageFrom(response, `Failed to remove construction zone report (status ${response.status}).`),
+    );
   }
 }

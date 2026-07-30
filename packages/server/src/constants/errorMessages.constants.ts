@@ -11,6 +11,7 @@ export const POI_ERROR_MESSAGES = {
 export const CONSTRUCTION_ZONE_ERROR_MESSAGES = {
   NOT_FOUND: "Construction zone report not found.",
   INVALID_ID: "Invalid construction zone report id.",
+  TOO_CLOSE_TO_EXISTING: "A road work report already exists near this location.",
 } as const;
 
 export const GENERAL_ERROR_MESSAGES = {
