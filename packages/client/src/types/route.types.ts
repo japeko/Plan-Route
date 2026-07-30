@@ -4,6 +4,12 @@ import type { PoiAlongRouteRequestDto } from "@poi/shared";
 export interface GeocodedPoint {
   label: string;
   position: LatLngTuple;
+  // This stop's index in the original start/via/end input order, before
+  // OSRM's Trip service possibly reorders via stops for the shortest
+  // route — lets a dragged via marker on the map (see MapView.vue's
+  // "move-stop" emit) be matched back to the right entry in
+  // RoutePlanner's via-stops list even after reordering.
+  sourceIndex?: number;
 }
 
 // The only languages instructions are translated into — matches the

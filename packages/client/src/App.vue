@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import type { LatLngTuple } from "leaflet";
 import type { PointOfInterest } from "@poi/shared";
 import MapView from "@/components/MapView.vue";
 import RouteFilters from "@/components/RouteFilters.vue";
@@ -29,6 +30,10 @@ function handleRouteCleared(): void {
 
 function handleAddStopFromPoi(poi: PointOfInterest): void {
   routePlannerRef.value?.addPoiAsStop(poi);
+}
+
+function handleMoveStop(sourceIndex: number, position: LatLngTuple): void {
+  routePlannerRef.value?.moveViaStop(sourceIndex, position);
 }
 
 function handleResizeMove(event: PointerEvent): void {
@@ -93,6 +98,7 @@ function startResize(event: PointerEvent): void {
         :filters="filters"
         @navigating="isNavigating = $event"
         @add-stop="handleAddStopFromPoi"
+        @move-stop="handleMoveStop"
       />
     </main>
   </div>

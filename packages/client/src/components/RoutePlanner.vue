@@ -87,7 +87,25 @@ function addPoiAsStop(poi: PointOfInterest): void {
   void planRoute();
 }
 
-defineExpose({ addPoiAsStop });
+// Called from App.vue when the user drags a "pass by" marker on the map
+// (see MapView.vue's "move-stop" emit) — locks that stop to the exact
+// dropped position (as an override, so it routes there directly instead
+// of being re-geocoded from its text) and re-plans immediately. This is
+// the general, user-driven answer to a route needing to pass through a
+// specific spot (e.g. a real bypass road) rather than trying to guess it
+// automatically: point at it directly.
+function moveViaStop(sourceIndex: number, position: LatLngTuple): void {
+  // sourceIndex 0 is always the start; via stops occupy 1..n-1 in the
+  // original input order.
+  const entry = viaStops.value[sourceIndex - 1];
+  if (!entry) {
+    return;
+  }
+  entry.override = { label: entry.override?.label ?? (entry.text || "Moved stop"), position };
+  void planRoute();
+}
+
+defineExpose({ addPoiAsStop, moveViaStop });
 
 async function useCurrentLocationAsStart(): Promise<void> {
   errorMessage.value = null;
@@ -189,7 +207,10 @@ async function planRoute(): Promise<void> {
   isPlanning.value = true;
   try {
     const geocoded = await Promise.all(
-      entries.map((entry) => entry.override ?? geocodeAddressInFinland(entry.text)),
+      entries.map(async (entry, index): Promise<GeocodedPoint> => {
+        const point = entry.override ?? (await geocodeAddressInFinland(entry.text));
+        return { ...point, sourceIndex: index };
+      }),
     );
 
     // OSRM's alternatives only work for a plain two-point trip — Trip's

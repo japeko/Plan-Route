@@ -32,7 +32,11 @@ import type { ConstructionZone, PoiFilterOptions, RoutePlan } from "@/types/rout
 import { formatDistance } from "@/utils/format";
 
 const props = defineProps<{ route: RoutePlan | null; filters: PoiFilterOptions }>();
-const emit = defineEmits<{ navigating: [boolean]; "add-stop": [poi: PointOfInterest] }>();
+const emit = defineEmits<{
+  navigating: [boolean];
+  "add-stop": [poi: PointOfInterest];
+  "move-stop": [sourceIndex: number, position: LatLngTuple];
+}>();
 
 const mapContainer = ref<HTMLDivElement | null>(null);
 const errorMessage = ref<string | null>(null);
@@ -487,7 +491,21 @@ function renderRoute(route: RoutePlan | null): void {
     L.marker(start.position, { icon: startEndIcon("start") }).bindPopup(`Start: ${start.label}`).addTo(layer);
   }
   viaStops.forEach((stop, index) => {
-    L.marker(stop.position, { icon: viaIcon(index + 1) }).bindPopup(`Stop ${index + 1}: ${stop.label}`).addTo(layer);
+    // Draggable so the user can drop it directly onto whichever real
+    // road they actually want the route to pass by (e.g. a town's
+    // bypass) rather than relying on geocoding to guess the right spot —
+    // disabled during navigation, where re-planning out from under the
+    // moving vehicle would be disorienting rather than useful.
+    const marker = L.marker(stop.position, { icon: viaIcon(index + 1), draggable: !isNavigating.value })
+      .bindPopup(`Stop ${index + 1}: ${stop.label}`)
+      .addTo(layer);
+    marker.on("dragend", () => {
+      const { lat, lng } = marker.getLatLng();
+      // Falls back to the marker's own position among via stops (1-based,
+      // matching RoutePlanner's start-at-index-0 convention) for a route
+      // loaded before sourceIndex existed (e.g. an old shared link).
+      emit("move-stop", stop.sourceIndex ?? index + 1, [lat, lng]);
+    });
   });
   if (end) {
     L.marker(end.position, { icon: startEndIcon("end") }).bindPopup(`End: ${end.label}`).addTo(layer);
@@ -729,6 +747,14 @@ onUnmounted(() => {
   border-style: solid;
   border-color: white;
   box-shadow: 0 0 2px rgba(0, 0, 0, 0.6);
+}
+
+.route-via-marker {
+  cursor: grab;
+}
+
+.route-via-marker:active {
+  cursor: grabbing;
 }
 
 .route-via-marker span {
