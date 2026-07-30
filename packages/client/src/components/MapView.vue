@@ -45,6 +45,11 @@ const currentStepIndex = ref(0);
 const navError = ref<string | null>(null);
 const isReportingZone = ref(false);
 const zoneReportError = ref<string | null>(null);
+// Collapsed by default on a narrow/mobile screen (matches App.vue's
+// mobile breakpoint) since the legend's stacked rows otherwise eat
+// noticeably into the already-limited map height there; desktop has
+// enough room to just show it. Still toggleable either way.
+const isLegendCollapsed = ref(window.innerWidth <= 640);
 
 // Gated on vehiclePosition, not just route: currentStepIndex defaults to 0,
 // so without this the banner would show step 0's instruction as soon as
@@ -82,6 +87,11 @@ function invalidateMapSizeAfterLayoutChange(): void {
     });
   });
 }
+
+// Also called directly by App.vue's sidebar/map drag handle, which
+// changes .map-area's size the same CSS-only way navigation start/stop
+// does above — same fix applies.
+defineExpose({ invalidateSize: invalidateMapSizeAfterLayoutChange });
 
 function stationFillColor(poi: GasStationPoi): string {
   if (poi.hasGasoline && poi.hasElectricCharging) {
@@ -578,38 +588,47 @@ onUnmounted(() => {
       v-if="route"
       class="legend"
     >
-      <div>
-        <span
-          class="dot"
-          style="background: #1971c2"
-        />Gasoline
-      </div>
-      <div>
-        <span
-          class="dot"
-          style="background: #7048e8"
-        />Electric charging
-      </div>
-      <div>
-        <span
-          class="dot"
-          style="background: #0c8599"
-        />Both
-      </div>
-      <div>
-        <span
-          class="dot"
-          style="background: #e8590c"
-        />Restaurant
-      </div>
-      <div><span class="dot ring" />Station has a restaurant</div>
-      <div>
-        <span
-          class="dot"
-          style="background: #795548"
-        />Camping area
-      </div>
-      <div>🚧 Road work</div>
+      <button
+        type="button"
+        class="legend-toggle"
+        @click="isLegendCollapsed = !isLegendCollapsed"
+      >
+        {{ isLegendCollapsed ? "Legend ▸" : "Legend ▾" }}
+      </button>
+      <template v-if="!isLegendCollapsed">
+        <div>
+          <span
+            class="dot"
+            style="background: #1971c2"
+          />Gasoline
+        </div>
+        <div>
+          <span
+            class="dot"
+            style="background: #7048e8"
+          />Electric charging
+        </div>
+        <div>
+          <span
+            class="dot"
+            style="background: #0c8599"
+          />Both
+        </div>
+        <div>
+          <span
+            class="dot"
+            style="background: #e8590c"
+          />Restaurant
+        </div>
+        <div><span class="dot ring" />Station has a restaurant</div>
+        <div>
+          <span
+            class="dot"
+            style="background: #795548"
+          />Camping area
+        </div>
+        <div>🚧 Road work</div>
+      </template>
     </div>
     <p
       v-if="errorMessage"
@@ -853,6 +872,17 @@ onUnmounted(() => {
   display: flex;
   flex-direction: column;
   gap: 0.25rem;
+}
+
+.legend-toggle {
+  align-self: flex-start;
+  padding: 0;
+  border: none;
+  background: none;
+  color: #495057;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
 }
 
 .dot {

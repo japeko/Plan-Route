@@ -14,5 +14,8 @@ export const NOMINATIM_REVERSE_URL = "https://nominatim.openstreetmap.org/revers
 // Route would instead force them in whatever order they were typed,
 // which can produce a much longer trip with unnecessary backtracking.
 export const OSRM_TRIP_BASE_URL = "https://router.project-osrm.org/trip/v1/driving";
+// Plain Route (not Trip) — the only one of the two that supports
+// `alternatives`, used for a direct start->end trip with no via stops.
+export const OSRM_ROUTE_BASE_URL = "https://router.project-osrm.org/route/v1/driving";
 
 export const FINLAND_COUNTRY_CODE = "fi";

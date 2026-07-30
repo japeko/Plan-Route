@@ -1,5 +1,5 @@
 import type { LatLngTuple } from "leaflet";
-import { OSRM_TRIP_BASE_URL } from "@/constants/api.constants";
+import { OSRM_ROUTE_BASE_URL, OSRM_TRIP_BASE_URL } from "@/constants/api.constants";
 import type { NavigationLanguage, NavigationStep } from "@/types/route.types";
 
 const NAVIGATION_LANGUAGES: NavigationLanguage[] = ["en", "fi", "sv"];
@@ -47,6 +47,22 @@ interface OsrmTripResponse {
   waypoints: OsrmWaypoint[];
 }
 
+// The plain Route service (as opposed to Trip) shares the same trip/leg/
+// step shape, minus the waypoint-reordering fields — but it's the only
+// one of the two that supports alternatives, which Trip's TSP-style
+// solver doesn't.
+interface OsrmRoute {
+  geometry: { coordinates: [number, number][] };
+  legs: OsrmLeg[];
+  distance: number;
+  duration: number;
+}
+
+interface OsrmRouteResponse {
+  code: string;
+  routes: OsrmRoute[];
+}
+
 export interface RoadTrip {
   path: LatLngTuple[];
   distanceMeters: number;
@@ -58,6 +74,16 @@ export interface RoadTrip {
   // order), so the caller can label each leg's arrival step with the
   // actual stop name rather than OSRM's generic "arrive".
   legs: NavigationStep[][];
+}
+
+// A single start->end option among possibly several — only available via
+// the plain Route service (see fetchRouteAlternatives), which means only
+// for a direct trip with no via stops to reorder.
+export interface RouteAlternative {
+  path: LatLngTuple[];
+  distanceMeters: number;
+  durationSeconds: number;
+  steps: NavigationStep[];
 }
 
 const TURN_PHRASES: Record<NavigationLanguage, Record<string, string>> = {
@@ -280,6 +306,17 @@ function roadLabel(step: OsrmStep): string {
   return namedRoad(step) || "the road";
 }
 
+function buildNavigationSteps(steps: OsrmStep[]): NavigationStep[] {
+  return steps.map((step) => ({
+    instructions: describeStepAllLanguages(step),
+    arrow: maneuverArrow(step.maneuver),
+    roadLabel: roadLabel(step),
+    distanceMeters: step.distance,
+    durationSeconds: step.duration,
+    location: [step.maneuver.location[1], step.maneuver.location[0]] as LatLngTuple,
+  }));
+}
+
 export async function fetchRoadTrip(stops: LatLngTuple[]): Promise<RoadTrip> {
   if (stops.length < 2) {
     throw new RoutingError("At least a start and an end location are required.");
@@ -313,16 +350,7 @@ export async function fetchRoadTrip(stops: LatLngTuple[]): Promise<RoadTrip> {
     .sort((a, b) => a.visitPosition - b.visitPosition)
     .map((entry) => entry.originalIndex);
 
-  const legs = trip.legs.map((leg) =>
-    leg.steps.map((step) => ({
-      instructions: describeStepAllLanguages(step),
-      arrow: maneuverArrow(step.maneuver),
-      roadLabel: roadLabel(step),
-      distanceMeters: step.distance,
-      durationSeconds: step.duration,
-      location: [step.maneuver.location[1], step.maneuver.location[0]] as LatLngTuple,
-    })),
-  );
+  const legs = trip.legs.map((leg) => buildNavigationSteps(leg.steps));
 
   return {
     path: trip.geometry.coordinates.map(([lon, lat]) => [lat, lon]),
@@ -331,4 +359,39 @@ export async function fetchRoadTrip(stops: LatLngTuple[]): Promise<RoadTrip> {
     visitOrder,
     legs,
   };
+}
+
+// Alternative routes for a direct start->end trip — OSRM's Route service
+// supports `alternatives`, unlike Trip's waypoint-reordering solver, but
+// as a tradeoff can't reorder/optimize via stops, so this is only used
+// when there are none. Even then, OSRM only returns more than one route
+// when a genuinely distinct, not-too-much-longer alternative exists for
+// that specific start/end pair — often it'll just be the one.
+export async function fetchRouteAlternatives(start: LatLngTuple, end: LatLngTuple): Promise<RouteAlternative[]> {
+  const coordinates = `${start[1]},${start[0]};${end[1]},${end[0]}`;
+  const params = new URLSearchParams({
+    overview: "full",
+    geometries: "geojson",
+    steps: "true",
+    alternatives: "true",
+  });
+
+  const response = await fetch(`${OSRM_ROUTE_BASE_URL}/${coordinates}?${params.toString()}`);
+
+  if (!response.ok) {
+    throw new RoutingError(`Routing request failed (status ${response.status}).`);
+  }
+
+  const data = (await response.json()) as OsrmRouteResponse;
+
+  if (data.code !== "Ok" || !data.routes || data.routes.length === 0) {
+    throw new RoutingError("No road route could be found through the given locations.");
+  }
+
+  return data.routes.map((route) => ({
+    path: route.geometry.coordinates.map(([lon, lat]) => [lat, lon] as LatLngTuple),
+    distanceMeters: route.distance,
+    durationSeconds: route.duration,
+    steps: buildNavigationSteps(route.legs.flatMap((leg) => leg.steps)),
+  }));
 }

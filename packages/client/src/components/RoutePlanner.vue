@@ -1,13 +1,16 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import type { LatLngTuple } from "leaflet";
 import type { PointOfInterest } from "@poi/shared";
 import { geocodeAddressInFinland, reverseGeocode } from "@/services/geocoding.service";
 import { GeolocationError, getCurrentPosition } from "@/services/navigation.service";
-import { fetchRoadTrip } from "@/services/routing.service";
+import { fetchRoadTrip, fetchRouteAlternatives } from "@/services/routing.service";
+import type { RouteAlternative } from "@/services/routing.service";
 import { currentLanguage } from "@/services/speech.service";
 import type { GeocodedPoint, NavigationStep, RoutePlan } from "@/types/route.types";
 import { formatDistance, formatDuration } from "@/utils/format";
 
+defineProps<{ isNavigating: boolean }>();
 const emit = defineEmits<{
   "route-planned": [route: RoutePlan];
   "route-cleared": [];
@@ -41,6 +44,15 @@ const summary = ref<{ distanceKm: string; duration: string } | null>(null);
 const wasReordered = ref(false);
 const directions = ref<NavigationStep[]>([]);
 const showDirections = ref(false);
+// Populated only for a direct start->end trip (no via stops) when OSRM's
+// Route service returns more than one genuinely distinct option — the
+// user picks one via selectRouteChoice() before it's actually applied.
+const routeChoices = ref<RouteAlternative[] | null>(null);
+const pendingChoiceStops = ref<GeocodedPoint[] | null>(null);
+// Which routeChoices entry is currently applied — kept (rather than
+// clearing routeChoices on pick) so both options stay visible to compare
+// and switch between without re-planning.
+const selectedChoiceIndex = ref<number | null>(null);
 
 function addStop(): void {
   viaStops.value.push(createEntry());
@@ -91,8 +103,63 @@ async function useCurrentLocationAsStart(): Promise<void> {
   }
 }
 
+// Replaces the generic "Arrive at your destination" (which OSRM gives
+// every arrival step, intermediate or final) with the actual stop name.
+function withArrivalLabel(step: NavigationStep, arrivalLabel: string): NavigationStep {
+  return {
+    ...step,
+    instructions: {
+      en: `Arrive at ${arrivalLabel}`,
+      fi: `Saavuit kohteeseen ${arrivalLabel}`,
+      sv: `Du har anlänt till ${arrivalLabel}`,
+    },
+    roadLabel: arrivalLabel,
+  };
+}
+
+function finalizeRoute(
+  stops: GeocodedPoint[],
+  path: LatLngTuple[],
+  distanceMeters: number,
+  durationSeconds: number,
+  steps: NavigationStep[],
+  reordered: boolean,
+): void {
+  directions.value = steps;
+  wasReordered.value = reordered;
+  summary.value = {
+    distanceKm: (distanceMeters / 1000).toFixed(1),
+    duration: formatDuration(durationSeconds),
+  };
+  emit("route-planned", { stops, path, distanceMeters, durationSeconds, steps });
+}
+
+function applyRouteAlternative(stops: GeocodedPoint[], alternative: RouteAlternative): void {
+  const arrivalLabel = stops[1]?.label ?? "your destination";
+  const steps = alternative.steps.map((step, index, all) =>
+    index === all.length - 1 ? withArrivalLabel(step, arrivalLabel) : step,
+  );
+  finalizeRoute(stops, alternative.path, alternative.distanceMeters, alternative.durationSeconds, steps, false);
+}
+
+// Called when the user picks a card from the route-choice list. Both
+// cards stay visible afterward (routeChoices isn't cleared) so the user
+// can compare and switch between them freely without re-planning.
+function selectRouteChoice(index: number): void {
+  const alternative = routeChoices.value?.[index];
+  const stops = pendingChoiceStops.value;
+  if (!alternative || !stops) {
+    return;
+  }
+  applyRouteAlternative(stops, alternative);
+  selectedChoiceIndex.value = index;
+}
+
 async function planRoute(): Promise<void> {
   errorMessage.value = null;
+  routeChoices.value = null;
+  pendingChoiceStops.value = null;
+  selectedChoiceIndex.value = null;
 
   if (!startAddress.value.trim() || !endAddress.value.trim()) {
     errorMessage.value = "Enter both a start and an end address.";
@@ -102,9 +169,10 @@ async function planRoute(): Promise<void> {
   // Snapshotted once rather than read while resolving, so a later
   // reassignment (e.g. clearRoute()) can't retroactively change which
   // stops this planRoute() call resolves.
+  const viaEntries = viaStops.value.filter((entry) => entry.override || entry.text.trim().length > 0);
   const entries: AddressEntry[] = [
     { text: startAddress.value, override: startOverride.value },
-    ...viaStops.value.filter((entry) => entry.override || entry.text.trim().length > 0),
+    ...viaEntries,
     { text: endAddress.value, override: null },
   ];
 
@@ -113,12 +181,37 @@ async function planRoute(): Promise<void> {
     const geocoded = await Promise.all(
       entries.map((entry) => entry.override ?? geocodeAddressInFinland(entry.text)),
     );
+
+    // OSRM's alternatives only work for a plain two-point trip — Trip's
+    // waypoint-reordering solver doesn't support them, so any via stops
+    // mean falling back to the single-route Trip flow below.
+    if (viaEntries.length === 0) {
+      const [startPoint, endPoint] = geocoded;
+      if (startPoint && endPoint) {
+        const alternatives = await fetchRouteAlternatives(startPoint.position, endPoint.position);
+        const onlyAlternative = alternatives[0];
+        if (alternatives.length <= 1) {
+          if (onlyAlternative) {
+            applyRouteAlternative([startPoint, endPoint], onlyAlternative);
+          }
+        } else {
+          routeChoices.value = alternatives;
+          pendingChoiceStops.value = [startPoint, endPoint];
+          // Apply the first option immediately so a route is already
+          // active (and highlighted) rather than showing an empty map
+          // until the user picks one.
+          selectRouteChoice(0);
+        }
+      }
+      return;
+    }
+
     const trip = await fetchRoadTrip(geocoded.map((stop) => stop.position));
 
     const orderedStops = trip.visitOrder
       .map((originalIndex) => geocoded[originalIndex])
       .filter((stop): stop is GeocodedPoint => stop !== undefined);
-    wasReordered.value = trip.visitOrder.some((originalIndex, position) => originalIndex !== position);
+    const reordered = trip.visitOrder.some((originalIndex, position) => originalIndex !== position);
 
     // Each leg's OSRM "arrive" step is generic ("Arrive at your
     // destination") even for an intermediate stop — replace it with the
@@ -129,33 +222,11 @@ async function planRoute(): Promise<void> {
           return step;
         }
         const arrivalStop = orderedStops[legIndex + 1];
-        return arrivalStop
-          ? {
-              ...step,
-              instructions: {
-                en: `Arrive at ${arrivalStop.label}`,
-                fi: `Saavuit kohteeseen ${arrivalStop.label}`,
-                sv: `Du har anlänt till ${arrivalStop.label}`,
-              },
-              roadLabel: arrivalStop.label,
-            }
-          : step;
+        return arrivalStop ? withArrivalLabel(step, arrivalStop.label) : step;
       }),
     );
-    directions.value = steps;
 
-    summary.value = {
-      distanceKm: (trip.distanceMeters / 1000).toFixed(1),
-      duration: formatDuration(trip.durationSeconds),
-    };
-
-    emit("route-planned", {
-      stops: orderedStops,
-      path: trip.path,
-      distanceMeters: trip.distanceMeters,
-      durationSeconds: trip.durationSeconds,
-      steps,
-    });
+    finalizeRoute(orderedStops, trip.path, trip.distanceMeters, trip.durationSeconds, steps, reordered);
   } catch (err) {
     errorMessage.value = err instanceof Error ? err.message : "Failed to plan the route.";
   } finally {
@@ -173,6 +244,9 @@ function clearRoute(): void {
   wasReordered.value = false;
   directions.value = [];
   showDirections.value = false;
+  routeChoices.value = null;
+  pendingChoiceStops.value = null;
+  selectedChoiceIndex.value = null;
   emit("route-cleared");
 }
 </script>
@@ -260,6 +334,25 @@ function clearRoute(): void {
         @click="clearRoute"
       >
         Clear
+      </button>
+    </div>
+    <div
+      v-if="routeChoices && !isNavigating"
+      class="route-choices"
+    >
+      <p class="route-choices-label">
+        Choose a route:
+      </p>
+      <button
+        v-for="(choice, index) in routeChoices"
+        :key="index"
+        type="button"
+        class="route-choice"
+        :class="{ 'route-choice--selected': index === selectedChoiceIndex }"
+        @click="selectRouteChoice(index)"
+      >
+        Route {{ index + 1 }}: {{ (choice.distanceMeters / 1000).toFixed(1) }} km &middot;
+        {{ formatDuration(choice.durationSeconds) }}
       </button>
     </div>
     <p
@@ -417,6 +510,36 @@ button[type="submit"] {
 button:disabled {
   opacity: 0.6;
   cursor: not-allowed;
+}
+
+.route-choices {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.route-choices-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #495057;
+  margin: 0;
+}
+
+.route-choice {
+  padding: 0.5rem 0.75rem;
+  border: 1px solid #1c7ed6;
+  border-radius: 4px;
+  background: #e7f5ff;
+  color: #1c7ed6;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-align: left;
+  cursor: pointer;
+}
+
+.route-choice--selected {
+  background: #1c7ed6;
+  color: white;
 }
 
 .summary {
