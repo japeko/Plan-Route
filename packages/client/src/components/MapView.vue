@@ -28,7 +28,7 @@ import { compassError, heading, startCompass, stopCompass } from "@/services/com
 import type { BoundingBox } from "@/services/digitraffic.service";
 import { fetchOfficialRoadworks } from "@/services/digitraffic.service";
 import { currentLanguage, speak, stopSpeaking } from "@/services/speech.service";
-import type { ConstructionZone, PoiFilterOptions, RoutePlan } from "@/types/route.types";
+import type { ConstructionZone, NavigationLanguage, PoiFilterOptions, RoutePlan } from "@/types/route.types";
 import { formatDistance } from "@/utils/format";
 
 const props = defineProps<{ route: RoutePlan | null; filters: PoiFilterOptions }>();
@@ -417,6 +417,20 @@ function stopNavigation(): void {
   }
 }
 
+// Spoken the instant navigation starts — mainly to unlock speech
+// synthesis on mobile. iOS Safari (and some Android WebViews) silently
+// drop the *first* speechSynthesis.speak() call of a page's lifetime
+// unless it happens synchronously inside a genuine user gesture; every
+// other call in this app happens later, from the async GPS watch
+// callback below, which no longer counts as one. Speaking here, directly
+// inside this click handler, unlocks it for every step announcement that
+// follows.
+const NAVIGATION_STARTED_PHRASES: Record<NavigationLanguage, string> = {
+  en: "Navigation started",
+  fi: "Navigointi aloitettu",
+  sv: "Navigering startad",
+};
+
 function startNavigation(): void {
   if (!props.route || !map) {
     return;
@@ -424,6 +438,7 @@ function startNavigation(): void {
   navError.value = null;
   currentStepIndex.value = 0;
   isFollowingRoute.value = true;
+  speak(NAVIGATION_STARTED_PHRASES[currentLanguage.value]);
 
   stopWatchingPosition = watchVehiclePosition(
     (position, speedKmh) => {
