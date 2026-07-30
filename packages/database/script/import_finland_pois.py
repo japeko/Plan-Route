@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Import Finnish gas stations, restaurants, and camping areas from OpenStreetMap into the poi database.
+"""Import Finnish gas stations, restaurants, camping areas, and accommodation from OpenStreetMap into the poi database.
 
 Data source: the Overpass API (OpenStreetMap), the same free/no-key OSM stack
 already used by packages/client for tiles, geocoding, and routing. Safe to
@@ -15,6 +15,9 @@ own electric-only station, and vice versa.
 A "camping" record can offer tent sites, caravan sites, or both, read from
 OSM's tourism=camp_site / tourism=caravan_site tags (and their tents=/
 caravans= sub-tags).
+
+An "accommodation" record is either a hotel or a hostel, read directly
+from OSM's tourism=hotel / tourism=hostel tags.
 
 Usage:
     pip install -r requirements.txt
@@ -274,8 +277,24 @@ def camping_to_document(camp: OsmElement) -> dict[str, Any]:
     }
 
 
+def accommodation_to_document(place: OsmElement) -> dict[str, Any]:
+    category = "hostel" if place.tag_value == "hostel" else "hotel"
+    return {
+        "osmId": place.osm_id,
+        "name": build_name(place.tags, "Hotel" if category == "hotel" else "Hostel"),
+        "type": "accommodation",
+        "location": {"type": "Point", "coordinates": [place.lon, place.lat]},
+        "address": build_address(place.tags),
+        "category": category,
+        "updatedAt": datetime.now(timezone.utc),
+    }
+
+
 def import_pois(mongodb_uri: str) -> None:
-    print("Fetching gas stations, EV charging points, restaurants, and camping areas in Finland from Overpass API...")
+    print(
+        "Fetching gas stations, EV charging points, restaurants, camping areas, and accommodation "
+        "in Finland from Overpass API..."
+    )
     print("  (one request per category, paced to avoid the public Overpass gateway's rate limit/timeout)")
     fuel_elements = fetch_osm_elements("amenity", "fuel")
     print(f"  fuel: {len(fuel_elements)}")
@@ -291,6 +310,12 @@ def import_pois(mongodb_uri: str) -> None:
     time.sleep(5)
     caravan_site_elements = fetch_osm_elements("tourism", "caravan_site")
     print(f"  caravan_site: {len(caravan_site_elements)}")
+    time.sleep(5)
+    hotel_elements = fetch_osm_elements("tourism", "hotel")
+    print(f"  hotel: {len(hotel_elements)}")
+    time.sleep(5)
+    hostel_elements = fetch_osm_elements("tourism", "hostel")
+    print(f"  hostel: {len(hostel_elements)}")
 
     print("Merging co-located fuel/charging points into stations and checking for attached restaurants...")
     stations = merge_fuel_and_charging(fuel_elements, charging_elements, restaurant_elements)
@@ -308,9 +333,13 @@ def import_pois(mongodb_uri: str) -> None:
     camping_elements = camp_site_elements + caravan_site_elements
     print(f"Built {len(camping_elements)} camping areas.")
 
+    accommodation_elements = hotel_elements + hostel_elements
+    print(f"Built {len(accommodation_elements)} accommodation places.")
+
     documents: list[dict[str, Any]] = [station_to_document(s) for s in stations]
     documents += [restaurant_to_document(r) for r in restaurant_elements]
     documents += [camping_to_document(c) for c in camping_elements]
+    documents += [accommodation_to_document(a) for a in accommodation_elements]
 
     client = MongoClient(mongodb_uri)
     collection = client.get_default_database()[COLLECTION_NAME]

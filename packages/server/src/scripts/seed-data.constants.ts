@@ -48,4 +48,18 @@ export const SEED_POIS: CreatePoiDto[] = [
     hasTentSites: true,
     hasCaravanSites: true,
   },
+  {
+    type: "accommodation",
+    name: "Katajanokka Hotel",
+    location: { type: "Point", coordinates: [24.9622, 60.1656] },
+    address: "Merikasarminkatu 1, Helsinki",
+    category: "hotel",
+  },
+  {
+    type: "accommodation",
+    name: "Kallio Backpackers Hostel",
+    location: { type: "Point", coordinates: [24.9497, 60.1832] },
+    address: "Fleminginkatu 9, Helsinki",
+    category: "hostel",
+  },
 ];

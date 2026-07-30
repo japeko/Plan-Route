@@ -1,4 +1,4 @@
-import { FUEL_TYPES } from "@poi/shared";
+import { ACCOMMODATION_CATEGORIES, FUEL_TYPES } from "@poi/shared";
 import { z } from "zod";
 
 const geoPointSchema = z.object({
@@ -37,10 +37,18 @@ const campingSchema = z.object({
   hasCaravanSites: z.boolean(),
 });
 
+export const accommodationCategorySchema = z.enum(ACCOMMODATION_CATEGORIES);
+
+const accommodationSchema = z.object({
+  ...basePoiFields,
+  type: z.literal("accommodation"),
+  category: accommodationCategorySchema,
+});
+
 // refine wraps (rather than joins) the union so discriminatedUnion still
 // sees plain object members, which it requires for its "type" discrimination.
 export const createPoiSchema = z
-  .discriminatedUnion("type", [gasStationSchema, restaurantSchema, campingSchema])
+  .discriminatedUnion("type", [gasStationSchema, restaurantSchema, campingSchema, accommodationSchema])
   .refine((poi) => poi.type !== "gas_station" || poi.hasGasoline || poi.hasElectricCharging, {
     message: "A gas station must offer gasoline, electric charging, or both.",
   })
@@ -58,6 +66,7 @@ export const updatePoiSchema = z
     hasRestaurant: z.boolean(),
     hasTentSites: z.boolean(),
     hasCaravanSites: z.boolean(),
+    category: accommodationCategorySchema,
   })
   .partial();
 
@@ -72,9 +81,11 @@ export const alongRouteRequestSchema = z.object({
   onlyWithRestaurant: z.boolean(),
   showCamping: z.boolean(),
   campingRadiusMeters: z.number().positive(),
+  showAccommodation: z.boolean(),
+  accommodationRadiusMeters: z.number().positive(),
 });
 
-export const poiTypeSchema = z.enum(["gas_station", "restaurant", "camping"]);
+export const poiTypeSchema = z.enum(["gas_station", "restaurant", "camping", "accommodation"]);
 
 export const viewportQuerySchema = z.object({
   minLng: z.coerce.number(),

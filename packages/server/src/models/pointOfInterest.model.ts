@@ -1,5 +1,5 @@
 import { Schema, model } from "mongoose";
-import type { PoiType } from "@poi/shared";
+import type { AccommodationCategory, PoiType } from "@poi/shared";
 
 export interface GeoPointDocument {
   type: "Point";
@@ -16,6 +16,7 @@ export interface PointOfInterestDocument {
   hasRestaurant?: boolean;
   hasTentSites?: boolean;
   hasCaravanSites?: boolean;
+  category?: AccommodationCategory;
 }
 
 const geoPointSchema = new Schema<GeoPointDocument>(
@@ -37,7 +38,7 @@ const toJsonTransform = {
 const pointOfInterestSchema = new Schema<PointOfInterestDocument>(
   {
     name: { type: String, required: true },
-    type: { type: String, enum: ["gas_station", "restaurant", "camping"], required: true },
+    type: { type: String, enum: ["gas_station", "restaurant", "camping", "accommodation"], required: true },
     location: { type: geoPointSchema, required: true },
     address: { type: String, required: false },
   },
@@ -88,5 +89,16 @@ export const CampingModel = PointOfInterestModel.discriminator<CampingDocument>(
   new Schema<CampingDocument>({
     hasTentSites: { type: Boolean, required: true },
     hasCaravanSites: { type: Boolean, required: true },
+  }),
+);
+
+export interface AccommodationDocument extends PointOfInterestDocument {
+  category: AccommodationCategory;
+}
+
+export const AccommodationModel = PointOfInterestModel.discriminator<AccommodationDocument>(
+  "accommodation",
+  new Schema<AccommodationDocument>({
+    category: { type: String, enum: ["hotel", "hostel"], required: true },
   }),
 );

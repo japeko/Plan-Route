@@ -1,4 +1,6 @@
-export type PoiType = "gas_station" | "restaurant" | "camping";
+export type PoiType = "gas_station" | "restaurant" | "camping" | "accommodation";
+
+export type AccommodationCategory = "hotel" | "hostel";
 
 export type FuelType = "gasoline" | "electric";
 
@@ -44,4 +46,12 @@ export interface CampingPoi extends BasePoi {
   hasCaravanSites: boolean;
 }
 
-export type PointOfInterest = GasStationPoi | RestaurantPoi | CampingPoi;
+export interface AccommodationPoi extends BasePoi {
+  type: "accommodation";
+  // Hotel and hostel are mutually exclusive OSM tags on a single element
+  // (unlike gas station's independent flags), so a single discriminating
+  // field fits better than a boolean pair here.
+  category: AccommodationCategory;
+}
+
+export type PointOfInterest = GasStationPoi | RestaurantPoi | CampingPoi | AccommodationPoi;

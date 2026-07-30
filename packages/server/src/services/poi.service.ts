@@ -1,5 +1,6 @@
 import * as turf from "@turf/turf";
 import type {
+  AccommodationCategory,
   CreatePoiDto,
   PoiAlongRouteRequestDto,
   PoiListQueryDto,
@@ -8,7 +9,13 @@ import type {
   PointOfInterest,
   UpdatePoiDto,
 } from "@poi/shared";
-import { CampingModel, GasStationModel, PointOfInterestModel, RestaurantModel } from "../models/pointOfInterest.model.js";
+import {
+  AccommodationModel,
+  CampingModel,
+  GasStationModel,
+  PointOfInterestModel,
+  RestaurantModel,
+} from "../models/pointOfInterest.model.js";
 import { POI_LIST_PROJECTION } from "../constants/poi.constants.js";
 
 // Projection is applied per the CLAUDE.md convention. POI documents are
@@ -27,6 +34,7 @@ interface LeanPoiDocument {
   hasRestaurant?: boolean;
   hasTentSites?: boolean;
   hasCaravanSites?: boolean;
+  category?: AccommodationCategory;
 }
 
 function toPointOfInterest(doc: LeanPoiDocument): PointOfInterest {
@@ -53,6 +61,14 @@ function toPointOfInterest(doc: LeanPoiDocument): PointOfInterest {
       type: "camping",
       hasTentSites: Boolean(doc.hasTentSites),
       hasCaravanSites: Boolean(doc.hasCaravanSites),
+    };
+  }
+
+  if (doc.type === "accommodation") {
+    return {
+      ...base,
+      type: "accommodation",
+      category: doc.category ?? "hotel",
     };
   }
 
@@ -149,6 +165,13 @@ export async function listPoisAlongRoute(options: PoiAlongRouteRequestDto): Prom
     }
   }
 
+  if (options.showAccommodation) {
+    const filter = buildCorridorFilter(line, options.accommodationRadiusMeters, { type: "accommodation" });
+    if (filter) {
+      branches.push(filter);
+    }
+  }
+
   // Nothing selected (or both corridors somehow came back empty) should
   // match nothing rather than falling through to "no filter at all". A
   // single-branch $or behaves identically to matching that branch
@@ -172,7 +195,9 @@ export async function createPoi(dto: CreatePoiDto): Promise<PointOfInterest> {
       ? await GasStationModel.create(dto)
       : dto.type === "camping"
         ? await CampingModel.create(dto)
-        : await RestaurantModel.create(dto);
+        : dto.type === "accommodation"
+          ? await AccommodationModel.create(dto)
+          : await RestaurantModel.create(dto);
   const lean = doc.toObject();
   return toPointOfInterest(lean as unknown as LeanPoiDocument);
 }

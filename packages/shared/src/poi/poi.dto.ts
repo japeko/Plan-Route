@@ -1,4 +1,4 @@
-import type { FuelType, GeoLineString, GeoPoint, PointOfInterest } from "./poi.types.js";
+import type { AccommodationCategory, FuelType, GeoLineString, GeoPoint, PointOfInterest } from "./poi.types.js";
 
 // A plain Omit<Union, K> collapses the union into its common shape, which
 // loses the gas_station/restaurant discrimination. Distribute over the
@@ -16,6 +16,7 @@ export interface UpdatePoiDto {
   hasRestaurant?: boolean;
   hasTentSites?: boolean;
   hasCaravanSites?: boolean;
+  category?: AccommodationCategory;
 }
 
 export interface PoiListQueryDto {
@@ -52,4 +53,9 @@ export interface PoiAlongRouteRequestDto {
   // people will drive much further off-route to reach one than they would
   // for a gas station, so this needs its own, larger, search radius.
   campingRadiusMeters: number;
+  showAccommodation: boolean;
+  // Independent for the same reason as campingRadiusMeters — hotels and
+  // hostels are also sparse enough along a route to warrant their own
+  // search radius.
+  accommodationRadiusMeters: number;
 }

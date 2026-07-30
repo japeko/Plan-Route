@@ -100,8 +100,21 @@ function stationFillColor(poi: GasStationPoi): string {
   return poi.hasElectricCharging ? "#7048e8" : "#1971c2";
 }
 
+function poiMarkerFillColor(poi: PointOfInterest): string {
+  switch (poi.type) {
+    case "restaurant":
+      return "#e8590c";
+    case "camping":
+      return "#795548";
+    case "accommodation":
+      return "#d6336c";
+    default:
+      return stationFillColor(poi);
+  }
+}
+
 function poiMarkerIcon(poi: PointOfInterest): L.DivIcon {
-  const fill = poi.type === "restaurant" ? "#e8590c" : poi.type === "camping" ? "#795548" : stationFillColor(poi);
+  const fill = poiMarkerFillColor(poi);
   const border = poi.type === "gas_station" && poi.hasRestaurant ? "#f59f00" : "#ffffff";
   return L.divIcon({
     className: "poi-marker",
@@ -128,6 +141,11 @@ function poiPopupHtml(poi: PointOfInterest): string {
     }
     const siteLabel = siteParts.length > 0 ? siteParts.join(" + ") : "Camping area";
     return `<strong>${poi.name}</strong><br>${siteLabel}${address}`;
+  }
+
+  if (poi.type === "accommodation") {
+    const categoryLabel = poi.category === "hotel" ? "Hotel" : "Hostel";
+    return `<strong>${poi.name}</strong><br>${categoryLabel}${address}`;
   }
 
   const fuelParts: string[] = [];
@@ -626,6 +644,12 @@ onUnmounted(() => {
             class="dot"
             style="background: #795548"
           />Camping area
+        </div>
+        <div>
+          <span
+            class="dot"
+            style="background: #d6336c"
+          />Hotel / hostel
         </div>
         <div>🚧 Road work</div>
       </template>
