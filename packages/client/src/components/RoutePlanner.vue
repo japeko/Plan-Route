@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref } from "vue";
+import { onMounted, ref } from "vue";
 import type { LatLngTuple } from "leaflet";
 import type { PointOfInterest } from "@poi/shared";
 import { geocodeAddressInFinland, reverseGeocode } from "@/services/geocoding.service";
@@ -53,6 +53,13 @@ const pendingChoiceStops = ref<GeocodedPoint[] | null>(null);
 // clearing routeChoices on pick) so both options stay visible to compare
 // and switch between without re-planning.
 const selectedChoiceIndex = ref<number | null>(null);
+// The exact resolved stops behind whichever route is currently active —
+// used for "Share route" so the link encodes real coordinates rather
+// than address text that would need re-geocoding (and could resolve
+// slightly differently) on the receiving device.
+const lastResolvedStops = ref<GeocodedPoint[] | null>(null);
+const shareUrl = ref<string | null>(null);
+const shareCopied = ref(false);
 
 function addStop(): void {
   viaStops.value.push(createEntry());
@@ -127,6 +134,9 @@ function finalizeRoute(
 ): void {
   directions.value = steps;
   wasReordered.value = reordered;
+  lastResolvedStops.value = stops;
+  shareUrl.value = null;
+  shareCopied.value = false;
   summary.value = {
     distanceKm: (distanceMeters / 1000).toFixed(1),
     duration: formatDuration(durationSeconds),
@@ -247,8 +257,76 @@ function clearRoute(): void {
   routeChoices.value = null;
   pendingChoiceStops.value = null;
   selectedChoiceIndex.value = null;
+  lastResolvedStops.value = null;
+  shareUrl.value = null;
+  shareCopied.value = false;
   emit("route-cleared");
 }
+
+// One query param holding the whole route as JSON — URLSearchParams
+// handles the encoding/decoding symmetrically, so nothing extra needs
+// escaping here even though address labels are free text.
+const SHARE_QUERY_PARAM = "route";
+
+interface SharedRoutePayload {
+  start: GeocodedPoint;
+  via: GeocodedPoint[];
+  end: GeocodedPoint;
+}
+
+async function shareRoute(): Promise<void> {
+  const stops = lastResolvedStops.value;
+  if (!stops || stops.length < 2) {
+    return;
+  }
+  const [start, ...rest] = stops;
+  const end = rest.pop();
+  if (!start || !end) {
+    return;
+  }
+  const payload: SharedRoutePayload = { start, via: rest, end };
+
+  const url = new URL(window.location.href);
+  url.search = "";
+  url.searchParams.set(SHARE_QUERY_PARAM, JSON.stringify(payload));
+  shareUrl.value = url.toString();
+  shareCopied.value = false;
+
+  try {
+    await navigator.clipboard.writeText(shareUrl.value);
+    shareCopied.value = true;
+  } catch {
+    // Clipboard API can fail (permissions, insecure context, older
+    // browsers) — the link is still shown in the readonly field below
+    // for the user to select and copy manually.
+  }
+}
+
+// Loads a route shared from another device (see shareRoute above) —
+// restores the exact stops as overrides (skipping re-geocoding, which
+// could resolve slightly differently) and plans it immediately.
+onMounted(() => {
+  const encoded = new URLSearchParams(window.location.search).get(SHARE_QUERY_PARAM);
+  if (!encoded) {
+    return;
+  }
+
+  // Strip the (potentially large) param from the visible URL regardless
+  // of whether parsing succeeds, so it doesn't linger in the address bar
+  // or get carried along by a later browser-level share/bookmark.
+  window.history.replaceState(null, "", window.location.pathname);
+
+  try {
+    const payload = JSON.parse(encoded) as SharedRoutePayload;
+    startAddress.value = payload.start.label;
+    startOverride.value = payload.start;
+    viaStops.value = payload.via.map((stop) => ({ text: stop.label, override: stop }));
+    endAddress.value = payload.end.label;
+    void planRoute();
+  } catch {
+    errorMessage.value = "That shared route link looks invalid.";
+  }
+});
 </script>
 
 <template>
@@ -335,6 +413,34 @@ function clearRoute(): void {
       >
         Clear
       </button>
+      <button
+        v-if="lastResolvedStops"
+        type="button"
+        class="share-route"
+        @click="shareRoute"
+      >
+        Share route
+      </button>
+    </div>
+    <div
+      v-if="shareUrl"
+      class="field"
+    >
+      <label for="share-url">Open this link on another device to load the route</label>
+      <input
+        id="share-url"
+        type="text"
+        class="share-url-input"
+        :value="shareUrl"
+        readonly
+        @focus="($event.target as HTMLInputElement).select()"
+      >
+      <p
+        v-if="shareCopied"
+        class="share-copied-note"
+      >
+        Link copied to clipboard!
+      </p>
     </div>
     <div
       v-if="routeChoices && !isNavigating"
@@ -505,6 +611,23 @@ button[type="submit"] {
   color: #495057;
   font-size: 0.9rem;
   cursor: pointer;
+}
+
+.actions .share-route {
+  background: #e7f5ff;
+  color: #1c7ed6;
+}
+
+.share-url-input {
+  font-size: 0.8rem;
+  color: #495057;
+}
+
+.share-copied-note {
+  margin: 0;
+  font-size: 0.8rem;
+  color: #2f9e44;
+  font-weight: 600;
 }
 
 button:disabled {
