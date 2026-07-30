@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import type { PointOfInterest } from "@poi/shared";
 import MapView from "@/components/MapView.vue";
 import RouteFilters from "@/components/RouteFilters.vue";
 import RoutePlanner from "@/components/RoutePlanner.vue";
@@ -10,10 +11,15 @@ import type { PoiFilterOptions, RoutePlan } from "@/types/route.types";
 const route = ref<RoutePlan | null>(null);
 const filters = ref<PoiFilterOptions>({ ...DEFAULT_POI_FILTERS });
 const isNavigating = ref(false);
+const routePlannerRef = ref<InstanceType<typeof RoutePlanner> | null>(null);
 
 function handleRouteCleared(): void {
   route.value = null;
   filters.value = { ...DEFAULT_POI_FILTERS };
+}
+
+function handleAddStopFromPoi(poi: PointOfInterest): void {
+  routePlannerRef.value?.addPoiAsStop(poi);
 }
 </script>
 
@@ -26,6 +32,7 @@ function handleRouteCleared(): void {
       <h1>Roadside Stops (Finland)</h1>
       <VoiceSettings />
       <RoutePlanner
+        ref="routePlannerRef"
         @route-planned="route = $event"
         @route-cleared="handleRouteCleared"
       />
@@ -40,6 +47,7 @@ function handleRouteCleared(): void {
         :route="route"
         :filters="filters"
         @navigating="isNavigating = $event"
+        @add-stop="handleAddStopFromPoi"
       />
     </main>
   </div>

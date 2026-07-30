@@ -29,7 +29,7 @@ import type { PoiFilterOptions, RoutePlan } from "@/types/route.types";
 import { formatDistance } from "@/utils/format";
 
 const props = defineProps<{ route: RoutePlan | null; filters: PoiFilterOptions }>();
-const emit = defineEmits<{ navigating: [boolean] }>();
+const emit = defineEmits<{ navigating: [boolean]; "add-stop": [poi: PointOfInterest] }>();
 
 const mapContainer = ref<HTMLDivElement | null>(null);
 const errorMessage = ref<string | null>(null);
@@ -125,6 +125,27 @@ function poiPopupHtml(poi: PointOfInterest): string {
   return `<strong>${poi.name}</strong><br>${fuelLabel} &mdash; ${restaurantLabel}${address}`;
 }
 
+// A real DOM element (rather than an HTML string) so the "Add as stop"
+// button can carry a genuine click listener that calls back into Vue,
+// instead of needing a global-scope function referenced from inline
+// HTML.
+function poiPopupContent(poi: PointOfInterest): HTMLElement {
+  const container = document.createElement("div");
+  container.innerHTML = poiPopupHtml(poi);
+
+  const addStopButton = document.createElement("button");
+  addStopButton.type = "button";
+  addStopButton.className = "popup-add-stop";
+  addStopButton.textContent = "Add as stop";
+  addStopButton.addEventListener("click", () => {
+    emit("add-stop", poi);
+    map?.closePopup();
+  });
+  container.appendChild(addStopButton);
+
+  return container;
+}
+
 function routeToGeoLineString(route: RoutePlan): GeoLineString {
   return {
     type: "LineString",
@@ -150,7 +171,7 @@ async function refreshPoisAlongRoute(): Promise<void> {
       const [lng, lat] = poi.location.coordinates;
       L.marker([lat, lng], { icon: poiMarkerIcon(poi) })
         .bindTooltip(poi.name, { direction: "top", offset: [0, -10] })
-        .bindPopup(poiPopupHtml(poi))
+        .bindPopup(poiPopupContent(poi))
         .addTo(poiLayer);
     }
     errorMessage.value = null;
@@ -550,6 +571,19 @@ onUnmounted(() => {
    push it up clear of it. */
 .leaflet-control-zoom {
   margin-bottom: 4.5rem !important;
+}
+
+.popup-add-stop {
+  display: block;
+  margin-top: 0.5rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid #1c7ed6;
+  border-radius: 4px;
+  background: #e7f5ff;
+  color: #1c7ed6;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
 }
 </style>
 

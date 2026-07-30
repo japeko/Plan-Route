@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from "vue";
+import type { PointOfInterest } from "@poi/shared";
 import { geocodeAddressInFinland, reverseGeocode } from "@/services/geocoding.service";
 import { GeolocationError, getCurrentPosition } from "@/services/navigation.service";
 import { fetchRoadTrip } from "@/services/routing.service";
@@ -12,9 +13,23 @@ const emit = defineEmits<{
   "route-cleared": [];
 }>();
 
+// Text shown in the field, plus an optional exact-position override so a
+// stop added from a POI marker (or "use my current location") routes to
+// its real coordinates rather than being re-geocoded back from a label —
+// which could land somewhere slightly different, especially for a POI
+// name that isn't itself a searchable address.
+interface AddressEntry {
+  text: string;
+  override: GeocodedPoint | null;
+}
+
+function createEntry(text = ""): AddressEntry {
+  return { text, override: null };
+}
+
 const startAddress = ref("");
 const endAddress = ref("");
-const viaAddresses = ref<string[]>([]);
+const viaStops = ref<AddressEntry[]>([]);
 const isPlanning = ref(false);
 const errorMessage = ref<string | null>(null);
 // Set when "Use my current location" resolves, so planRoute() can use the
@@ -28,16 +43,32 @@ const directions = ref<NavigationStep[]>([]);
 const showDirections = ref(false);
 
 function addStop(): void {
-  viaAddresses.value.push("");
+  viaStops.value.push(createEntry());
 }
 
 function removeStop(index: number): void {
-  viaAddresses.value.splice(index, 1);
+  viaStops.value.splice(index, 1);
+}
+
+function clearViaOverride(index: number): void {
+  const entry = viaStops.value[index];
+  if (entry) {
+    entry.override = null;
+  }
 }
 
 function clearStartOverride(): void {
   startOverride.value = null;
 }
+
+// Called from App.vue when the user taps "Add as stop" on a POI popup.
+function addPoiAsStop(poi: PointOfInterest): void {
+  const [lng, lat] = poi.location.coordinates;
+  viaStops.value.push({ text: poi.name, override: { label: poi.name, position: [lat, lng] } });
+  void planRoute();
+}
+
+defineExpose({ addPoiAsStop });
 
 async function useCurrentLocationAsStart(): Promise<void> {
   errorMessage.value = null;
@@ -68,19 +99,19 @@ async function planRoute(): Promise<void> {
     return;
   }
 
-  const viaEntries = viaAddresses.value.map((address) => address.trim()).filter((address) => address.length > 0);
-  const addresses = [startAddress.value, ...viaEntries, endAddress.value];
-  // Captured once rather than read inside the map callback, so a later
+  // Snapshotted once rather than read while resolving, so a later
   // reassignment (e.g. clearRoute()) can't retroactively change which
-  // stop this planRoute() call resolves.
-  const startOverridePoint = startOverride.value;
+  // stops this planRoute() call resolves.
+  const entries: AddressEntry[] = [
+    { text: startAddress.value, override: startOverride.value },
+    ...viaStops.value.filter((entry) => entry.override || entry.text.trim().length > 0),
+    { text: endAddress.value, override: null },
+  ];
 
   isPlanning.value = true;
   try {
     const geocoded = await Promise.all(
-      addresses.map((address, index) =>
-        index === 0 && startOverridePoint ? startOverridePoint : geocodeAddressInFinland(address),
-      ),
+      entries.map((entry) => entry.override ?? geocodeAddressInFinland(entry.text)),
     );
     const trip = await fetchRoadTrip(geocoded.map((stop) => stop.position));
 
@@ -136,7 +167,7 @@ function clearRoute(): void {
   startAddress.value = "";
   startOverride.value = null;
   endAddress.value = "";
-  viaAddresses.value = [];
+  viaStops.value = [];
   summary.value = null;
   errorMessage.value = null;
   wasReordered.value = false;
@@ -174,7 +205,7 @@ function clearRoute(): void {
     </div>
 
     <div
-      v-for="(_, index) in viaAddresses"
+      v-for="(stop, index) in viaStops"
       :key="index"
       class="field via-field"
     >
@@ -182,9 +213,10 @@ function clearRoute(): void {
       <div class="via-row">
         <input
           :id="`via-address-${index}`"
-          v-model="viaAddresses[index]"
+          v-model="stop.text"
           type="text"
           placeholder="e.g. Hämeenlinna"
+          @input="clearViaOverride(index)"
         >
         <button
           type="button"
