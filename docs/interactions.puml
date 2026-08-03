@@ -1,0 +1,57 @@
+```plantuml
+@startuml plan-route-interactions
+title Plan-Route: client / server / external service interactions
+
+actor User
+participant "Vue Client" as Client
+participant "Express Server\n(/api/pois, /api/construction-zones)" as Server
+database "MongoDB" as Mongo
+participant "Nominatim\n(geocoding)" as Nominatim
+participant "OSRM demo\n(trip / route)" as OSRM
+participant "Digitraffic\n(roadworks feed)" as Digitraffic
+participant "OSM Tile Server" as Tiles
+
+== Load map ==
+Client -> Tiles : GET tile {z}/{x}/{y}.png
+Tiles --> Client : PNG tile
+
+== Plan a route ==
+User -> Client : enter start / destination
+Client -> Nominatim : GET /search?q=...
+Nominatim --> Client : coordinates
+
+alt multiple stops
+    Client -> OSRM : GET /trip/v1/driving/...
+else start -> end only
+    Client -> OSRM : GET /route/v1/driving/...\n(alternatives=true)
+end
+OSRM --> Client : route geometry + alternatives
+
+par along the computed route
+    Client -> Server : POST /api/pois/along-route
+    Server -> Mongo : find POIs (projected fields only)
+    Mongo --> Server : POIs
+    Server --> Client : POIs (gas/EV, food, camping, lodging)
+else
+    Client -> Server : POST /api/construction-zones/along-route
+    Server -> Mongo : find reports near route
+    Mongo --> Server : reports
+    Server --> Client : user-submitted road-work reports
+else
+    Client -> Digitraffic : GET /roadworks?bbox=...\n(header: Digitraffic-User)
+    Digitraffic --> Client : official Finnish roadworks
+end
+
+Client --> User : render route, POIs, roadworks on map
+
+== Report a road-work zone ==
+User -> Client : mark road work on map
+Client -> Server : POST /api/construction-zones
+Server -> Mongo : insert report
+Server --> Client : 201 Created
+
+== Live navigation ==
+Client -> Client : Geolocation.watchPosition()\nDeviceOrientation (compass)
+Client -> Client : speechSynthesis.speak(instruction)
+@enduml
+```

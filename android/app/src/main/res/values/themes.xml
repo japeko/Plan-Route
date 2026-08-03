@@ -1,0 +1,6 @@
+<resources>
+    <!-- Base window theme before Compose takes over — Compose screens use
+         their own Material3 theme (see ui/theme/Theme.kt); this just needs
+         to exist for the manifest/launch-screen to reference. -->
+    <style name="Theme.PlanRoute" parent="android:Theme.Material.Light.NoActionBar" />
+</resources>

@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug builds only (see app/src/debug/AndroidManifest.xml) — lets the app
+  reach a local POI server over plain HTTP (SERVER_BASE_URL in .env is
+  typically a LAN IP like http://192.168.1.100:3001/, not HTTPS). Android
+  blocks cleartext traffic by default from API 28+; release builds keep
+  that default, so this only ever applies to local development.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

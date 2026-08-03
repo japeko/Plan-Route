@@ -1,0 +1,89 @@
+# Local full-stack dev via Docker: mongo + server + client, built from
+# source. Not used for production — see deploy/ for the Traefik-fronted
+# stack that pulls published ghcr.io images instead.
+#
+#   docker compose up --build   # start (rebuild on source changes)
+#   docker compose down         # stop
+#   docker compose down -v      # stop and wipe the mongo volume
+#
+# Client: http://localhost:4173  Server: http://localhost:3001
+# Mongo admin UI: http://localhost:8081 (login admin/admin)
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: poi-mongo
+    restart: unless-stopped
+    ports:
+      - "27017:27017"
+    volumes:
+      - poi-mongo-data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--quiet", "--eval", "db.runCommand('ping').ok"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+
+  server:
+    build:
+      context: .
+      dockerfile: packages/server/Dockerfile
+    container_name: poi-server
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/poi
+      PORT: "3001"
+      CLIENT_ORIGIN: http://localhost:4173
+    ports:
+      - "3001:3001"
+    restart: unless-stopped
+
+  client:
+    build:
+      context: .
+      dockerfile: packages/client/Dockerfile
+    container_name: poi-client
+    depends_on:
+      - server
+    environment:
+      # Lets the client container's vite-preview server forward /api calls
+      # to the server container (see the proxy comment in vite.config.ts).
+      PREVIEW_API_PROXY_TARGET: http://server:3001
+    ports:
+      - "4173:4173"
+    restart: unless-stopped
+
+  # Populates mongo with Finland POIs from OSM (Overpass API). Runs once per
+  # `up` and exits — safe to re-run, records are upserted by OSM element id.
+  importer:
+    build:
+      context: ./packages/database/script
+    container_name: poi-importer
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      MONGODB_URI: mongodb://mongo:27017/poi
+
+  # Local dev only — mongo here has no auth (unlike deploy/, which requires
+  # MONGO_ROOT_USERNAME/PASSWORD), and this port isn't published beyond
+  # localhost, so a fixed local login is fine.
+  mongo-express:
+    image: mongo-express:1.0.2
+    container_name: poi-mongo-express
+    depends_on:
+      mongo:
+        condition: service_healthy
+    environment:
+      ME_CONFIG_MONGODB_URL: mongodb://mongo:27017/
+      ME_CONFIG_BASICAUTH_USERNAME: admin
+      ME_CONFIG_BASICAUTH_PASSWORD: admin
+    ports:
+      - "8081:8081"
+    restart: unless-stopped
+
+volumes:
+  poi-mongo-data:

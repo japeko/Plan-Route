@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- No local persisted state yet (voice choice / last route will
+         eventually live here via DataStore) — nothing to include or
+         exclude until then. -->
+</full-backup-content>

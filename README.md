@@ -26,6 +26,27 @@ pnpm build
 Runs each package's build (`vue-tsc -b && vite build` for the client, `tsc -b`
 for the server, both depending on `@poi/shared` being built first).
 
+## Run the full stack locally (Docker Compose)
+
+`docker-compose.yml` at the repo root builds and runs mongo, the server, the
+client, the OSM POI importer, and mongo-express, all from source — a
+self-contained alternative to running `pnpm dev` plus `packages/database`'s
+compose stack separately. The importer runs once per `up` and exits (safe to
+re-run — it upserts by OSM id):
+
+```bash
+docker compose up --build   # client: http://localhost:4173, server: http://localhost:3001
+docker compose down         # stop (add -v to also wipe the mongo volume)
+```
+
+Browse the database at http://localhost:8081 (login `admin`/`admin` — fine
+for local use since mongo itself has no auth here and this port isn't
+published beyond localhost).
+
+This is for local use only — see [Distribution builds (Docker)](#distribution-builds-docker)
+below for production images, and [`deploy/README.md`](deploy/README.md) for
+the Traefik-fronted cloud stack.
+
 ## Distribution builds (Docker)
 
 The client and server ship as **separate Docker images**, each built from its

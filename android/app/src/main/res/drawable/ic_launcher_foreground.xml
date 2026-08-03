@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Placeholder mark (a simple pin) — swap via Android Studio's
+     Image Asset Studio (right-click res/ > New > Image Asset) once a
+     real app icon exists. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,30 C45.16,30 38,37.16 38,46 C38,58 54,78 54,78 C54,78 70,58 70,46 C70,37.16 62.84,30 54,30 Z M54,53 C50.13,53 47,49.87 47,46 C47,42.13 50.13,39 54,39 C57.87,39 61,42.13 61,46 C61,49.87 57.87,53 54,53 Z" />
+</vector>
