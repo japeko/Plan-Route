@@ -398,6 +398,8 @@ fun PlanRouteApp() {
                     selectedRouteId = selectedRouteId,
                     onSelectRoute = { selectedRouteId = it; refreshServerPois() },
                     onBackToPlanning = { mode = SheetMode.PLANNING },
+                    selectedRouteSteps = plannedRoutes.firstOrNull { it.option.id == selectedRouteId }?.steps
+                        ?: emptyList(),
                 )
             }
         },

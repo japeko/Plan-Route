@@ -13,6 +13,7 @@ interface OsrmApi {
         @Query("alternatives") alternatives: Boolean = true,
         @Query("geometries") geometries: String = "geojson",
         @Query("overview") overview: String = "full",
+        @Query("steps") steps: Boolean = true,
     ): OsrmRouteResponse
 }
 
@@ -29,6 +30,7 @@ data class OsrmRoute(
     /** Seconds. */
     val duration: Double,
     val geometry: OsrmGeometry,
+    val legs: List<OsrmLeg> = emptyList(),
 )
 
 @Serializable
@@ -36,4 +38,29 @@ data class OsrmGeometry(
     val type: String,
     /** [lon, lat] pairs, per GeoJSON convention. */
     val coordinates: List<List<Double>> = emptyList(),
+)
+
+/** One leg per waypoint-to-waypoint segment (start→via, via→via, via→end, ...). */
+@Serializable
+data class OsrmLeg(
+    val steps: List<OsrmStep> = emptyList(),
+)
+
+@Serializable
+data class OsrmStep(
+    /** Meters. */
+    val distance: Double,
+    /** Seconds. */
+    val duration: Double,
+    /** Street name — often blank for unnamed roads/ramps. */
+    val name: String = "",
+    val maneuver: OsrmManeuver,
+)
+
+@Serializable
+data class OsrmManeuver(
+    /** "depart" | "arrive" | "turn" | "merge" | "roundabout" | "fork" | "end of road" | ... — see OSRM's step maneuver docs. */
+    val type: String,
+    /** "left" | "right" | "straight" | "slight left" | "sharp right" | "uturn" | ... — absent for types like "depart"/"arrive". */
+    val modifier: String? = null,
 )

@@ -1,21 +1,24 @@
 package com.planroute.app.ui
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.MyLocation
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -31,6 +34,10 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -40,6 +47,7 @@ import com.planroute.app.model.GasAmenity
 import com.planroute.app.model.RouteOption
 import com.planroute.app.model.SheetMode
 import com.planroute.app.model.ViaStop
+import com.planroute.app.repository.RouteStep
 import com.planroute.app.ui.theme.RouteEnd
 import com.planroute.app.ui.theme.RoutePrimary
 import com.planroute.app.ui.theme.RouteStart
@@ -102,6 +110,7 @@ fun PlannerSheetContent(
     selectedRouteId: Int?,
     onSelectRoute: (Int) -> Unit,
     onBackToPlanning: () -> Unit,
+    selectedRouteSteps: List<RouteStep>,
 ) {
     Column(
         modifier = Modifier
@@ -116,6 +125,7 @@ fun PlannerSheetContent(
                 selectedRouteId = selectedRouteId,
                 onSelectRoute = onSelectRoute,
                 onBackToPlanning = onBackToPlanning,
+                selectedRouteSteps = selectedRouteSteps,
             )
             isPeeking -> PeekSummary(startAddress)
             else -> PlanningForm(
@@ -351,7 +361,10 @@ private fun RouteComparisonSection(
     selectedRouteId: Int?,
     onSelectRoute: (Int) -> Unit,
     onBackToPlanning: () -> Unit,
+    selectedRouteSteps: List<RouteStep>,
 ) {
+    var showDirections by remember { mutableStateOf(false) }
+
     Text(
         "Choose a route",
         style = MaterialTheme.typography.labelSmall,
@@ -369,8 +382,38 @@ private fun RouteComparisonSection(
             )
         }
     }
-    TextButton(onClick = onBackToPlanning, modifier = Modifier.padding(top = 4.dp)) {
-        Text("Edit stops")
+    Row(modifier = Modifier.padding(top = 4.dp)) {
+        TextButton(onClick = onBackToPlanning) {
+            Text("Edit stops")
+        }
+        TextButton(onClick = { showDirections = !showDirections }) {
+            Text(if (showDirections) "Hide directions" else "Show directions")
+        }
+    }
+    if (showDirections) {
+        if (selectedRouteSteps.isEmpty()) {
+            Text(
+                "No directions available.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp),
+            )
+        } else {
+            LazyColumn(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(max = 260.dp)
+                    .padding(top = 4.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                itemsIndexed(selectedRouteSteps) { index, step ->
+                    Text(
+                        "${index + 1}. ${step.instruction} — ${formatDistance(step.distanceMeters.toFloat())}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
+            }
+        }
     }
 }
 
