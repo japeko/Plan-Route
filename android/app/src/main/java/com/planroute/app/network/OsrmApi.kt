@@ -63,4 +63,6 @@ data class OsrmManeuver(
     val type: String,
     /** "left" | "right" | "straight" | "slight left" | "sharp right" | "uturn" | ... — absent for types like "depart"/"arrive". */
     val modifier: String? = null,
+    /** [lon, lat] where this maneuver happens. */
+    val location: List<Double> = emptyList(),
 )

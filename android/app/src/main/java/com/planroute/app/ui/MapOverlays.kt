@@ -12,6 +12,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -23,6 +24,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Explore
 import androidx.compose.material.icons.filled.Hotel
 import androidx.compose.material.icons.filled.LocalGasStation
+import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.RecordVoiceOver
 import androidx.compose.material.icons.filled.Terrain
 import androidx.compose.material.icons.filled.Warning
@@ -44,15 +46,21 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.rotate
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shadow
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import kotlin.math.roundToInt
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.LifecycleOwner
@@ -76,6 +84,7 @@ import org.osmdroid.events.MapListener
 import org.osmdroid.events.ScrollEvent
 import org.osmdroid.events.ZoomEvent
 import org.osmdroid.tileprovider.tilesource.TileSourceFactory
+import org.osmdroid.util.BoundingBox
 import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.MapEventsOverlay
@@ -140,6 +149,7 @@ fun ExploreMap(
     selectedVoiceLabel: String,
     onOpenVoicePicker: () -> Unit,
     currentSpeedKmh: Double = 0.0,
+    vehicleBearingDegrees: Float = 0f,
 ) {
     val context = LocalContext.current
     var mapView by remember { mutableStateOf<MapView?>(null) }
@@ -227,6 +237,20 @@ fun ExploreMap(
             mv.controller.animateTo(vehiclePosition)
         }
 
+        // Fits the selected route's full geometry on screen right after
+        // planning (or after picking a different alternative in the
+        // comparison list) — otherwise a freshly planned route stays at
+        // whatever zoom/center the map happened to be at before. Only
+        // while comparing, not navigating: the follow-effect above owns
+        // the camera once driving starts.
+        LaunchedEffect(selectedRoute, isNavigating) {
+            if (isNavigating) return@LaunchedEffect
+            val mv = mapView ?: return@LaunchedEffect
+            val geometry = selectedRoute?.geometry ?: return@LaunchedEffect
+            if (geometry.isEmpty()) return@LaunchedEffect
+            mv.zoomToBoundingBox(BoundingBox.fromGeoPoints(geometry), true, 96)
+        }
+
         val lifecycleOwner = context as? LifecycleOwner
         DisposableEffect(lifecycleOwner, mapView) {
             val owner = lifecycleOwner
@@ -269,7 +293,12 @@ fun ExploreMap(
             }
 
             if (isNavigating) {
-                VehicleMarker(mapView = mv, cameraTick = cameraTick, position = vehiclePosition)
+                VehicleMarker(
+                    mapView = mv,
+                    cameraTick = cameraTick,
+                    position = vehiclePosition,
+                    bearingDegrees = vehicleBearingDegrees,
+                )
             }
 
             if (!isNavigating) {
@@ -310,12 +339,30 @@ fun ExploreMap(
         // ---------- Chrome ----------
 
         if (!isNavigating) {
-            CompassButton(
-                modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(top = 12.dp, start = 12.dp),
+            // Level with "Start navigation" (same top offset, opposite
+            // corner) — see the matching Column below.
+            Pill(
+                text = selectedVoiceLabel,
+                containerColor = MaterialTheme.colorScheme.surface,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                icon = { Icon(Icons.Filled.RecordVoiceOver, contentDescription = null, modifier = Modifier.size(16.dp)) },
+                onClick = onOpenVoicePicker,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .statusBarsPadding()
+                    .padding(top = 6.dp, start = 12.dp),
             )
 
             Column(
-                modifier = Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(top = 12.dp, end = 12.dp),
+                // Top padding matches the 6dp gap between pills below
+                // (Arrangement.spacedBy), so "Start navigation" sits as far
+                // from the status bar as "Voice" sits from "Start
+                // navigation" — a consistent rhythm. Both pills move
+                // together since they're columns in the same Column.
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .statusBarsPadding()
+                    .padding(top = 6.dp, end = 12.dp),
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(6.dp),
             ) {
@@ -326,23 +373,6 @@ fun ExploreMap(
                     enabled = canStartNavigation,
                     onClick = onStartNavigation,
                 )
-                Pill(
-                    text = selectedVoiceLabel,
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    contentColor = MaterialTheme.colorScheme.onSurface,
-                    icon = { Icon(Icons.Filled.RecordVoiceOver, contentDescription = null, modifier = Modifier.size(16.dp)) },
-                    onClick = onOpenVoicePicker,
-                )
-                if (showRoutePins && selectedRoute != null) {
-                    Pill(
-                        text = if (showRoadWorks) "Hide road works" else "Road works on route",
-                        containerColor = MaterialTheme.colorScheme.surface,
-                        contentColor = MaterialTheme.colorScheme.onSurface,
-                        selected = showRoadWorks,
-                        icon = { Icon(Icons.Filled.Warning, contentDescription = null, tint = RouteWarn, modifier = Modifier.size(16.dp)) },
-                        onClick = { showRoadWorks = !showRoadWorks },
-                    )
-                }
                 // Disabled — user-submitted road-work reporting. Re-enable by
                 // restoring this Pill; onToggleReportRoadWork/isReportingRoadWork
                 // and the map-tap-to-place-report flow are still wired up.
@@ -367,12 +397,53 @@ fun ExploreMap(
                     onClick = { legendExpanded = !legendExpanded },
                 )
             }
+
+            if (showRoutePins && selectedRoute != null) {
+                Pill(
+                    text = if (showRoadWorks) "Hide road works" else "Road works on route",
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    contentColor = MaterialTheme.colorScheme.onSurface,
+                    selected = showRoadWorks,
+                    icon = { Icon(Icons.Filled.Warning, contentDescription = null, tint = RouteWarn, modifier = Modifier.size(16.dp)) },
+                    onClick = { showRoadWorks = !showRoadWorks },
+                    // Same bottom padding as the Legend pill (bottom-start),
+                    // so both sit at the same height — just opposite corners.
+                    modifier = Modifier.align(Alignment.BottomEnd).padding(bottom = 14.dp, end = 12.dp),
+                )
+            }
         }
         // Stop lives inside NavigationBanner itself now (see MainActivity) —
         // it used to float here too, overlapping the banner's turn text. No
         // Recenter pill either: the camera always follows while navigating
         // (see the LaunchedEffect above), so there's never anywhere to
         // recenter back from.
+
+        if (isNavigating) {
+            // Bottom-left, not top-left: MainActivity draws NavigationBanner
+            // (full-width, top-anchored) as a sibling on top of ExploreMap,
+            // so a top-left compass here would just render underneath it,
+            // completely hidden — confirmed by an on-device screenshot.
+            CompassButton(
+                modifier = Modifier.align(Alignment.BottomStart).navigationBarsPadding().padding(bottom = 14.dp, start = 12.dp),
+            )
+
+            // No background/Surface here on purpose — the map should stay
+            // visible behind it. The dark text shadow carries legibility
+            // instead, over whatever tiles/roads happen to be underneath.
+            Text(
+                "${currentSpeedKmh.roundToInt()} km/h",
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 28.dp),
+                color = Color.White,
+                fontSize = 52.sp,
+                fontWeight = FontWeight.Bold,
+                style = TextStyle(
+                    shadow = Shadow(color = Color.Black.copy(alpha = 0.7f), offset = Offset(0f, 2f), blurRadius = 10f),
+                ),
+            )
+        }
     }
 }
 
@@ -550,9 +621,10 @@ private fun PoiPin(mapView: MapView, cameraTick: IntState, marker: PoiMarker, on
     }
 }
 
+/** A directional arrow puck (Google/Apple Maps convention) instead of a plain dot, rotated to the GPS heading so it reads as "which way am I facing," not just "where am I." */
 @Composable
-private fun VehicleMarker(mapView: MapView, cameraTick: IntState, position: GeoPoint) {
-    val size = 18.dp
+private fun VehicleMarker(mapView: MapView, cameraTick: IntState, position: GeoPoint, bearingDegrees: Float) {
+    val size = 34.dp
     Box(
         modifier = Modifier
             .pinOffset(mapView, cameraTick, position, size)
@@ -560,7 +632,12 @@ private fun VehicleMarker(mapView: MapView, cameraTick: IntState, position: GeoP
             .background(Color.White, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
-        Box(modifier = Modifier.size(size - 6.dp).background(RouteNavAccent, CircleShape))
+        Icon(
+            Icons.Filled.Navigation,
+            contentDescription = "Your position",
+            tint = RoutePrimary,
+            modifier = Modifier.size(size - 8.dp).rotate(bearingDegrees),
+        )
     }
 }
 

@@ -15,8 +15,23 @@ data class PlannedRoute(
     val steps: List<RouteStep> = emptyList(),
 )
 
-/** One turn-by-turn step, worded plainly from OSRM's raw maneuver fields — this is a debug view, not a polished nav voice. */
-data class RouteStep(val instruction: String, val distanceMeters: Int)
+/**
+ * One turn-by-turn step, kept as OSRM's raw maneuver fields rather than a
+ * pre-formatted string, so callers can both localize it for spoken/banner
+ * guidance ([com.planroute.app.voice.localizedInstruction]) and render a
+ * plain debug label (the "Show directions" list).
+ */
+data class RouteStep(
+    /** "depart" | "arrive" | "turn" | "merge" | "roundabout" | "fork" | "end of road" | ... */
+    val maneuverType: String,
+    /** "left" | "right" | "straight" | "slight left" | "sharp right" | "uturn" | ... — often absent. */
+    val maneuverModifier: String?,
+    /** Often blank for unnamed roads/ramps. */
+    val streetName: String,
+    val distanceMeters: Int,
+    /** Where this maneuver happens — used to match the step against the vehicle's live position. */
+    val location: GeoPoint,
+)
 
 /** Wraps the public OSRM demo instance — called directly by the client, not proxied through packages/server. */
 object RoutingRepository {
@@ -44,11 +59,13 @@ object RoutingRepository {
     }
 }
 
-private fun OsrmStep.toRouteStep(): RouteStep {
-    val modifierPart = maneuver.modifier?.let { " ($it)" } ?: ""
-    val namePart = if (name.isNotBlank()) " → $name" else ""
-    return RouteStep(
-        instruction = "${maneuver.type}$modifierPart$namePart",
-        distanceMeters = distance.roundToInt(),
-    )
-}
+private fun OsrmStep.toRouteStep(): RouteStep = RouteStep(
+    maneuverType = maneuver.type,
+    maneuverModifier = maneuver.modifier,
+    streetName = name,
+    distanceMeters = distance.roundToInt(),
+    location = GeoPoint(
+        maneuver.location.getOrElse(1) { 0.0 },
+        maneuver.location.getOrElse(0) { 0.0 },
+    ),
+)

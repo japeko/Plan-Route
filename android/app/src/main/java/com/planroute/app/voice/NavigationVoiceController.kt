@@ -5,6 +5,9 @@ import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.speech.tts.Voice
 import android.util.Log
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import java.util.Locale
 
 /**
@@ -35,7 +38,9 @@ data class NavigationVoiceOption(val voice: Voice, val label: String)
  * voice happened to be active.
  */
 class NavigationVoiceController(context: Context) {
-    private var isReady = false
+    /** Compose-observable so callers can react (e.g. auto-selecting a default voice) once the engine finishes initializing. */
+    var isReady by mutableStateOf(false)
+        private set
     private var pendingUtterance: String? = null
     private var selectedVoiceOption: NavigationVoiceOption? = null
 

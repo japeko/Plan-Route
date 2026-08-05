@@ -407,8 +407,10 @@ private fun RouteComparisonSection(
                 verticalArrangement = Arrangement.spacedBy(4.dp),
             ) {
                 itemsIndexed(selectedRouteSteps) { index, step ->
+                    val modifierPart = step.maneuverModifier?.let { " ($it)" } ?: ""
+                    val namePart = if (step.streetName.isNotBlank()) " → ${step.streetName}" else ""
                     Text(
-                        "${index + 1}. ${step.instruction} — ${formatDistance(step.distanceMeters.toFloat())}",
+                        "${index + 1}. ${step.maneuverType}$modifierPart$namePart — ${formatDistance(step.distanceMeters.toFloat())}",
                         style = MaterialTheme.typography.bodySmall,
                     )
                 }

@@ -77,6 +77,9 @@ import com.planroute.app.ui.theme.RouteNavAccent
 import com.planroute.app.voice.NavigationVoiceController
 import com.planroute.app.voice.NavigationVoiceOption
 import com.planroute.app.voice.TargetVoiceLanguages
+import com.planroute.app.voice.aheadAnnouncement
+import com.planroute.app.voice.localizedInstruction
+import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
 import org.osmdroid.util.GeoPoint
 
@@ -108,11 +111,13 @@ class MainActivity : ComponentActivity() {
  * talk to those open data services directly from the client, no
  * packages/server hop. Spoken guidance ([NavigationVoiceController]) wraps
  * Android's on-device TextToSpeech engine, limited to Finnish/English/
- * Swedish voices. Real turn-by-turn instructions (parsed from OSRM's route
- * steps) and a proper ViewModel layer (this is still plain Activity-scoped
- * Compose state) are follow-up work — [NavigationBanner] still shows one
- * static demo instruction (in whichever of fi/en/sv the selected voice
- * uses), spoken once when navigation starts.
+ * Swedish voices. Turn-by-turn instructions are parsed from OSRM's route
+ * steps and matched against the live GPS position as it's tracked (see the
+ * `updateNavigationProgress` local function below): [NavigationBanner]
+ * shows and speaks each upcoming maneuver as the vehicle nears it, in
+ * whichever of fi/en/sv the selected voice uses. A proper ViewModel layer
+ * (this is still plain Activity-scoped Compose state) remains follow-up
+ * work.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -125,12 +130,23 @@ fun PlanRouteApp() {
     DisposableEffect(Unit) { onDispose { voiceController.shutdown() } }
     var selectedVoice by remember { mutableStateOf<NavigationVoiceOption?>(null) }
     var showVoicePicker by remember { mutableStateOf(false) }
+    // Auto-pick a voice once the TTS engine is ready, so navigation always
+    // has one selected without the user having to open the picker first.
+    // Finnish is preferred; falls back to whatever's first if no Finnish
+    // voice is installed.
+    LaunchedEffect(voiceController.isReady) {
+        if (voiceController.isReady && selectedVoice == null) {
+            val voices = voiceController.availableVoices()
+            val voice = voices.firstOrNull { it.voice.locale.language in setOf("fi", "fin") } ?: voices.firstOrNull()
+            if (voice != null) {
+                selectedVoice = voice
+                voiceController.selectVoice(voice)
+            }
+        }
+    }
 
     var mode by remember { mutableStateOf(SheetMode.PLANNING) }
     var isNavigating by remember { mutableStateOf(false) }
-    LaunchedEffect(isNavigating) {
-        if (isNavigating) voiceController.speak(demoInstructionFor(selectedVoice?.voice?.locale?.language))
-    }
 
     // Live position/speed while driving — ExploreMap uses both to keep the
     // vehicle centered and to pick a zoom level for the current speed (see
@@ -138,19 +154,19 @@ fun PlanRouteApp() {
     // route's own start/geometry point when next explored.
     var liveVehiclePosition by remember { mutableStateOf<GeoPoint?>(null) }
     var currentSpeedKmh by remember { mutableStateOf(0.0) }
-    LaunchedEffect(isNavigating) {
-        if (!isNavigating) {
-            liveVehiclePosition = null
-            currentSpeedKmh = 0.0
-            return@LaunchedEffect
-        }
-        LocationRepository.trackLocation(context).collect { location ->
-            liveVehiclePosition = GeoPoint(location.latitude, location.longitude)
-            if (location.hasSpeed()) {
-                currentSpeedKmh = location.speed * 3.6
-            }
-        }
-    }
+    var vehicleBearingDegrees by remember { mutableStateOf(0f) }
+
+    // Progress through the selected route's turn-by-turn steps, advanced as
+    // liveVehiclePosition nears each step's maneuver location (see
+    // updateNavigationProgress below, and the LaunchedEffect(isNavigating)
+    // that drives it — placed further down since it reads plannedRoutes/
+    // selectedRouteId). Drives both NavigationBanner's text/distance and
+    // when spoken announcements fire.
+    var currentStepIndex by remember { mutableStateOf(0) }
+    var preAnnouncedStepIndex by remember { mutableStateOf(-1) }
+    var announcedStepIndex by remember { mutableStateOf(-1) }
+    var navInstruction by remember { mutableStateOf("") }
+    var navDistanceMeters by remember { mutableStateOf<Int?>(null) }
 
     var startAddress by remember { mutableStateOf("") }
     var endAddress by remember { mutableStateOf("") }
@@ -158,13 +174,80 @@ fun PlanRouteApp() {
     var endPosition by remember { mutableStateOf<GeoPoint?>(null) }
     var nextStopId by remember { mutableStateOf(0) }
     val viaStops = remember { mutableStateListOf<ViaStop>() }
-    // All three on by default — the spec's "by default gas stations within
-    // 500m..." etc. means these searches run automatically once a route
-    // exists, not that the user has to discover and tap the chips first.
-    val selectedFilters = remember { mutableStateListOf("Gas stations", "Camping", "Hotels") }
+    // Gas stations on by default; camping and hotels are opt-in via the
+    // filter chips rather than shown automatically.
+    val selectedFilters = remember { mutableStateListOf("Gas stations") }
 
     val plannedRoutes = remember { mutableStateListOf<PlannedRoute>() }
     var selectedRouteId by remember { mutableStateOf<Int?>(null) }
+
+    // Compares the live position against the step currently being
+    // approached; once within NavArriveThresholdMeters the step counts as
+    // reached (spoken once, then advances to the next one), and once
+    // within NavPreAnnounceThresholdMeters an "in X m" lead announcement
+    // fires once. Both banner text/distance are updated on every call so
+    // they track the vehicle continuously, not just at announcement time.
+    fun updateNavigationProgress(position: GeoPoint) {
+        val steps = plannedRoutes.firstOrNull { it.option.id == selectedRouteId }?.steps ?: return
+        if (steps.isEmpty() || currentStepIndex >= steps.size) return
+        val languageCode = selectedVoice?.voice?.locale?.language
+        val step = steps[currentStepIndex]
+        val distance = position.distanceToAsDouble(step.location).roundToInt()
+        navInstruction = step.localizedInstruction(languageCode)
+        navDistanceMeters = distance
+
+        when {
+            distance <= NavArriveThresholdMeters -> {
+                if (announcedStepIndex != currentStepIndex) {
+                    voiceController.speak(navInstruction)
+                    announcedStepIndex = currentStepIndex
+                }
+                if (currentStepIndex < steps.lastIndex) {
+                    currentStepIndex += 1
+                    preAnnouncedStepIndex = -1
+                    val next = steps[currentStepIndex]
+                    navInstruction = next.localizedInstruction(languageCode)
+                    navDistanceMeters = position.distanceToAsDouble(next.location).roundToInt()
+                }
+            }
+            distance <= NavPreAnnounceThresholdMeters -> {
+                if (preAnnouncedStepIndex != currentStepIndex) {
+                    voiceController.speak(aheadAnnouncement(navInstruction, distance, languageCode))
+                    preAnnouncedStepIndex = currentStepIndex
+                }
+            }
+        }
+    }
+
+    LaunchedEffect(isNavigating) {
+        if (!isNavigating) {
+            liveVehiclePosition = null
+            currentSpeedKmh = 0.0
+            return@LaunchedEffect
+        }
+        val steps = plannedRoutes.firstOrNull { it.option.id == selectedRouteId }?.steps ?: emptyList()
+        // Step 0 is "depart" — its maneuver location is the starting point
+        // itself, which the vehicle is already at, so start at step 1 to
+        // avoid an immediate spurious "arrival" the moment nav begins.
+        currentStepIndex = if (steps.size > 1) 1 else 0
+        preAnnouncedStepIndex = -1
+        announcedStepIndex = -1
+        navInstruction = steps.getOrNull(currentStepIndex)
+            ?.localizedInstruction(selectedVoice?.voice?.locale?.language) ?: ""
+        navDistanceMeters = null
+        LocationRepository.trackLocation(context).collect { location ->
+            val position = GeoPoint(location.latitude, location.longitude)
+            liveVehiclePosition = position
+            if (location.hasSpeed()) {
+                currentSpeedKmh = location.speed * 3.6
+            }
+            if (location.hasBearing()) {
+                vehicleBearingDegrees = location.bearing
+            }
+            updateNavigationProgress(position)
+        }
+    }
+
     var isPlanning by remember { mutableStateOf(false) }
     var planningError by remember { mutableStateOf<String?>(null) }
 
@@ -453,11 +536,13 @@ fun PlanRouteApp() {
                 selectedVoiceLabel = selectedVoice?.label?.let { "Voice: $it" } ?: "Voice",
                 onOpenVoicePicker = { showVoicePicker = true },
                 currentSpeedKmh = currentSpeedKmh,
+                vehicleBearingDegrees = vehicleBearingDegrees,
             )
 
             if (isNavigating) {
                 NavigationBanner(
-                    instruction = demoInstructionFor(selectedVoice?.voice?.locale?.language),
+                    instruction = navInstruction.ifBlank { "Continue" },
+                    distanceMeters = navDistanceMeters,
                     onStop = { isNavigating = false },
                     modifier = Modifier
                         .align(Alignment.TopCenter)
@@ -483,22 +568,18 @@ fun PlanRouteApp() {
     }
 }
 
-/** Stand-in for real turn-by-turn text until OSRM route steps are parsed — see the class doc comment above. */
-private const val DemoNavInstruction = "Turn left onto Ilmarinkatu"
+/** A step counts as "reached" (spoken, then advance to the next one) once the vehicle is this close to its maneuver location. */
+private const val NavArriveThresholdMeters = 40
 
-/** Both the spoken and the on-screen instruction follow whichever voice is selected — English if none is picked yet. */
-private val DemoNavInstructionsByLanguage = mapOf(
-    "fi" to "Käänny vasemmalle Ilmarinkadulle",
-    "sv" to "Sväng vänster in på Ilmarinkatu",
-    "en" to DemoNavInstruction,
-)
+/** An "in X m, do the next thing" lead announcement fires once the vehicle is this close to the upcoming maneuver. */
+private const val NavPreAnnounceThresholdMeters = 200
 
-private fun demoInstructionFor(languageCode: String?): String =
-    DemoNavInstructionsByLanguage[languageCode] ?: DemoNavInstruction
+private fun formatNavDistance(meters: Int): String =
+    if (meters >= 1000) "%.1f km".format(meters / 1000f) else "$meters m"
 
 /** Turn-by-turn banner shown while navigating — arrow + instruction + distance + stop, fixed dark chrome. */
 @Composable
-private fun NavigationBanner(instruction: String, onStop: () -> Unit, modifier: Modifier = Modifier) {
+private fun NavigationBanner(instruction: String, distanceMeters: Int?, onStop: () -> Unit, modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier,
         color = RouteInk,
@@ -513,7 +594,7 @@ private fun NavigationBanner(instruction: String, onStop: () -> Unit, modifier: 
         ) {
             Text("↰", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = RouteNavAccent)
             Text(instruction, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
-            Text("350 m", color = Color(0xFFFFC9C9))
+            Text(distanceMeters?.let { formatNavDistance(it) } ?: "", color = Color(0xFFFFC9C9))
             // A colored circular button reads unmistakably as a control
             // against the dark banner — a plain white icon-only IconButton
             // here was too easy to miss at a glance while driving.
