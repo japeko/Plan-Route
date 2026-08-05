@@ -52,6 +52,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -66,6 +67,7 @@ import com.planroute.app.repository.LocationRepository
 import com.planroute.app.repository.PlannedRoute
 import com.planroute.app.repository.PoiRepository
 import com.planroute.app.repository.PoiSearchSettings
+import com.planroute.app.repository.RouteSimulator
 import com.planroute.app.repository.RoutingRepository
 import com.planroute.app.ui.DemoGeography
 import com.planroute.app.ui.ExploreMap
@@ -78,6 +80,7 @@ import com.planroute.app.voice.NavigationVoiceController
 import com.planroute.app.voice.NavigationVoiceOption
 import com.planroute.app.voice.TargetVoiceLanguages
 import com.planroute.app.voice.aheadAnnouncement
+import com.planroute.app.voice.arrowGlyphFor
 import com.planroute.app.voice.localizedInstruction
 import kotlin.math.roundToInt
 import kotlinx.coroutines.launch
@@ -147,6 +150,18 @@ fun PlanRouteApp() {
 
     var mode by remember { mutableStateOf(SheetMode.PLANNING) }
     var isNavigating by remember { mutableStateOf(false) }
+    // Keeps the screen on for the duration of a trip — a phone that dims
+    // or locks mid-navigation is worse than useless. Cleared automatically
+    // once navigation stops (or the screen would stay forced-on forever).
+    val view = LocalView.current
+    DisposableEffect(isNavigating) {
+        view.keepScreenOn = isNavigating
+        onDispose { view.keepScreenOn = false }
+    }
+    // Debug-only: drives isNavigating off RouteSimulator's fabricated
+    // fixes instead of real GPS — see the LaunchedEffect(isNavigating)
+    // below, which branches on this to pick the location source.
+    var isSimulatingDrive by remember { mutableStateOf(false) }
 
     // Live position/speed while driving — ExploreMap uses both to keep the
     // vehicle centered and to pick a zoom level for the current speed (see
@@ -157,16 +172,16 @@ fun PlanRouteApp() {
     var vehicleBearingDegrees by remember { mutableStateOf(0f) }
 
     // Progress through the selected route's turn-by-turn steps, advanced as
-    // liveVehiclePosition nears each step's maneuver location (see
-    // updateNavigationProgress below, and the LaunchedEffect(isNavigating)
-    // that drives it — placed further down since it reads plannedRoutes/
-    // selectedRouteId). Drives both NavigationBanner's text/distance and
-    // when spoken announcements fire.
+    // the vehicle travels along the route (see updateNavigationProgress
+    // inside the LaunchedEffect(isNavigating) below, which reads
+    // plannedRoutes/selectedRouteId). Drives both NavigationBanner's
+    // text/distance and when spoken announcements fire.
     var currentStepIndex by remember { mutableStateOf(0) }
     var preAnnouncedStepIndex by remember { mutableStateOf(-1) }
     var announcedStepIndex by remember { mutableStateOf(-1) }
     var navInstruction by remember { mutableStateOf("") }
     var navDistanceMeters by remember { mutableStateOf<Int?>(null) }
+    var navManeuverModifier by remember { mutableStateOf<String?>(null) }
 
     var startAddress by remember { mutableStateOf("") }
     var endAddress by remember { mutableStateOf("") }
@@ -181,51 +196,50 @@ fun PlanRouteApp() {
     val plannedRoutes = remember { mutableStateListOf<PlannedRoute>() }
     var selectedRouteId by remember { mutableStateOf<Int?>(null) }
 
-    // Compares the live position against the step currently being
-    // approached; once within NavArriveThresholdMeters the step counts as
-    // reached (spoken once, then advances to the next one), and once
-    // within NavPreAnnounceThresholdMeters an "in X m" lead announcement
-    // fires once. Both banner text/distance are updated on every call so
-    // they track the vehicle continuously, not just at announcement time.
-    fun updateNavigationProgress(position: GeoPoint) {
-        val steps = plannedRoutes.firstOrNull { it.option.id == selectedRouteId }?.steps ?: return
-        if (steps.isEmpty() || currentStepIndex >= steps.size) return
-        val languageCode = selectedVoice?.voice?.locale?.language
-        val step = steps[currentStepIndex]
-        val distance = position.distanceToAsDouble(step.location).roundToInt()
-        navInstruction = step.localizedInstruction(languageCode)
-        navDistanceMeters = distance
-
-        when {
-            distance <= NavArriveThresholdMeters -> {
-                if (announcedStepIndex != currentStepIndex) {
-                    voiceController.speak(navInstruction)
-                    announcedStepIndex = currentStepIndex
-                }
-                if (currentStepIndex < steps.lastIndex) {
-                    currentStepIndex += 1
-                    preAnnouncedStepIndex = -1
-                    val next = steps[currentStepIndex]
-                    navInstruction = next.localizedInstruction(languageCode)
-                    navDistanceMeters = position.distanceToAsDouble(next.location).roundToInt()
-                }
-            }
-            distance <= NavPreAnnounceThresholdMeters -> {
-                if (preAnnouncedStepIndex != currentStepIndex) {
-                    voiceController.speak(aheadAnnouncement(navInstruction, distance, languageCode))
-                    preAnnouncedStepIndex = currentStepIndex
-                }
-            }
-        }
-    }
-
     LaunchedEffect(isNavigating) {
         if (!isNavigating) {
             liveVehiclePosition = null
             currentSpeedKmh = 0.0
+            isSimulatingDrive = false
             return@LaunchedEffect
         }
-        val steps = plannedRoutes.firstOrNull { it.option.id == selectedRouteId }?.steps ?: emptyList()
+        val route = plannedRoutes.firstOrNull { it.option.id == selectedRouteId }
+        val steps = route?.steps ?: emptyList()
+        val geometry = route?.geometry ?: emptyList()
+
+        // Distance traveled *along the route's own path* rather than raw
+        // straight-line distance to each maneuver's coordinate — matching
+        // against a fixed radius around that raw point turned out fragile:
+        // depending on exactly where OSRM places the maneuver coordinate
+        // relative to the road, the closest approach could land either
+        // outside the arrival radius (the step then never counted as
+        // reached, leaving the banner frozen on a turn already made) or
+        // well before the vehicle had actually completed the turn
+        // (advancing to the next instruction too early). Progress along
+        // the path is monotonic, so neither failure mode can happen: it's
+        // always eventually >= any threshold ahead of it, and never
+        // "arrives" before actually passing that point on the road.
+        val cumulative = DoubleArray(geometry.size)
+        for (i in 1 until geometry.size) {
+            cumulative[i] = cumulative[i - 1] + geometry[i - 1].distanceToAsDouble(geometry[i])
+        }
+        fun distanceAlongRoute(point: GeoPoint): Double {
+            if (geometry.isEmpty()) return 0.0
+            val nearestIndex = geometry.indices.minByOrNull { point.distanceToAsDouble(geometry[it]) } ?: 0
+            return cumulative[nearestIndex]
+        }
+        // The final ("arrive") step's threshold is forced to the route's
+        // exact total length rather than nearest-vertex-matched like every
+        // other step: OSRM's route geometry always terminates precisely at
+        // the destination coordinate that was routed to, which is a firmer
+        // ground truth than the arrive maneuver's own location field —
+        // nearest-vertex matching that field landed short by 50-100m
+        // against a specific street-address destination in testing,
+        // announcing "arrived" while still that far away.
+        val stepThresholds = steps.mapIndexed { index, step ->
+            if (index == steps.lastIndex) cumulative.lastOrNull() ?: 0.0 else distanceAlongRoute(step.location)
+        }
+
         // Step 0 is "depart" — its maneuver location is the starting point
         // itself, which the vehicle is already at, so start at step 1 to
         // avoid an immediate spurious "arrival" the moment nav begins.
@@ -234,8 +248,50 @@ fun PlanRouteApp() {
         announcedStepIndex = -1
         navInstruction = steps.getOrNull(currentStepIndex)
             ?.localizedInstruction(selectedVoice?.voice?.locale?.language) ?: ""
+        navManeuverModifier = steps.getOrNull(currentStepIndex)?.maneuverModifier
         navDistanceMeters = null
-        LocationRepository.trackLocation(context).collect { location ->
+
+        fun updateNavigationProgress(position: GeoPoint) {
+            if (steps.isEmpty() || currentStepIndex >= steps.size) return
+            val languageCode = selectedVoice?.voice?.locale?.language
+            val progress = distanceAlongRoute(position)
+
+            // A loop, not a single `if`: a slow update tick (or a cluster
+            // of very short steps, e.g. inside a roundabout) could mean
+            // progress jumps past more than one step's threshold at once.
+            while (currentStepIndex < steps.lastIndex && progress >= stepThresholds[currentStepIndex]) {
+                currentStepIndex += 1
+                preAnnouncedStepIndex = -1
+            }
+
+            val step = steps[currentStepIndex]
+            val distance = (stepThresholds[currentStepIndex] - progress).coerceAtLeast(0.0).roundToInt()
+            navInstruction = step.localizedInstruction(languageCode)
+            navManeuverModifier = step.maneuverModifier
+            navDistanceMeters = distance
+
+            when {
+                distance <= NavArriveThresholdMeters -> {
+                    if (announcedStepIndex != currentStepIndex) {
+                        voiceController.speak(navInstruction)
+                        announcedStepIndex = currentStepIndex
+                    }
+                }
+                distance <= NavPreAnnounceThresholdMeters -> {
+                    if (preAnnouncedStepIndex != currentStepIndex) {
+                        voiceController.speak(aheadAnnouncement(navInstruction, distance, languageCode))
+                        preAnnouncedStepIndex = currentStepIndex
+                    }
+                }
+            }
+        }
+
+        val locations = if (isSimulatingDrive && route != null) {
+            RouteSimulator.simulateDrive(route)
+        } else {
+            LocationRepository.trackLocation(context)
+        }
+        locations.collect { location ->
             val position = GeoPoint(location.latitude, location.longitude)
             liveVehiclePosition = position
             if (location.hasSpeed()) {
@@ -366,7 +422,10 @@ fun PlanRouteApp() {
         val end = endPosition
         if (start != null && end != null) {
             scope.launch {
-                val results = RoutingRepository.route(listOf(start) + viaStops.map { it.position } + listOf(end))
+                val results = RoutingRepository.route(
+                    listOf(start) + viaStops.map { it.position } + listOf(end),
+                    destinationLabel = endAddress,
+                )
                 if (results.isNotEmpty()) {
                     plannedRoutes.clear()
                     plannedRoutes.addAll(results)
@@ -444,7 +503,10 @@ fun PlanRouteApp() {
                                 }
                             }
 
-                            val results = RoutingRepository.route(listOf(startGeo) + viaGeos + endGeo)
+                            val results = RoutingRepository.route(
+                                listOf(startGeo) + viaGeos + endGeo,
+                                destinationLabel = endAddress,
+                            )
                             if (results.isEmpty()) {
                                 planningError = "Could not calculate a route between those stops"
                                 isPlanning = false
@@ -532,6 +594,7 @@ fun PlanRouteApp() {
                 selectedRouteId = selectedRouteId,
                 canStartNavigation = mode == SheetMode.COMPARING,
                 onStartNavigation = { requestLocationPermissionThen { isNavigating = true } },
+                onSimulateDrive = { isSimulatingDrive = true; isNavigating = true },
                 onToggleReportRoadWork = { isReportingRoadWork = !isReportingRoadWork },
                 selectedVoiceLabel = selectedVoice?.label?.let { "Voice: $it" } ?: "Voice",
                 onOpenVoicePicker = { showVoicePicker = true },
@@ -542,6 +605,7 @@ fun PlanRouteApp() {
             if (isNavigating) {
                 NavigationBanner(
                     instruction = navInstruction.ifBlank { "Continue" },
+                    arrow = arrowGlyphFor(navManeuverModifier),
                     distanceMeters = navDistanceMeters,
                     onStop = { isNavigating = false },
                     modifier = Modifier
@@ -579,7 +643,7 @@ private fun formatNavDistance(meters: Int): String =
 
 /** Turn-by-turn banner shown while navigating — arrow + instruction + distance + stop, fixed dark chrome. */
 @Composable
-private fun NavigationBanner(instruction: String, distanceMeters: Int?, onStop: () -> Unit, modifier: Modifier = Modifier) {
+private fun NavigationBanner(instruction: String, arrow: String, distanceMeters: Int?, onStop: () -> Unit, modifier: Modifier = Modifier) {
     Surface(
         modifier = modifier,
         color = RouteInk,
@@ -592,7 +656,7 @@ private fun NavigationBanner(instruction: String, distanceMeters: Int?, onStop: 
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            Text("↰", fontSize = 22.sp, fontWeight = FontWeight.Bold, color = RouteNavAccent)
+            Text(arrow, fontSize = 22.sp, fontWeight = FontWeight.Bold, color = RouteNavAccent)
             Text(instruction, modifier = Modifier.weight(1f), fontWeight = FontWeight.SemiBold)
             Text(distanceMeters?.let { formatNavDistance(it) } ?: "", color = Color(0xFFFFC9C9))
             // A colored circular button reads unmistakably as a control

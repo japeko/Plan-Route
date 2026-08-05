@@ -145,6 +145,7 @@ fun ExploreMap(
     selectedRouteId: Int? = null,
     canStartNavigation: Boolean,
     onStartNavigation: () -> Unit,
+    onSimulateDrive: () -> Unit,
     onToggleReportRoadWork: () -> Unit,
     selectedVoiceLabel: String,
     onOpenVoicePicker: () -> Unit,
@@ -164,6 +165,18 @@ fun ExploreMap(
     val currentIsReporting = rememberUpdatedState(isReportingRoadWork)
     val currentOnReportTap = rememberUpdatedState(onMapTapWhileReporting)
 
+    // While navigating, a pinch/manual zoom pauses the auto-follow camera
+    // for AutoFollowPauseMillis rather than snapping back on the very next
+    // fix — 0L means "not paused." Tapping empty map (not a marker; see
+    // the MapEventsOverlay below) clears this early to resume immediately.
+    val followPausedUntil = remember { mutableStateOf(0L) }
+    // The zoom level auto-follow itself last commanded — compared against
+    // the map's actual current zoom to detect a user-caused pinch, rather
+    // than re-deriving an "expected" zoom from currentSpeedKmh each tick
+    // (which would drift from what was last set purely because speed
+    // changed, and falsely look like a user zoom).
+    val lastCommandedZoom = remember { mutableStateOf<Double?>(null) }
+
     BoxWithConstraints(modifier = modifier) {
         AndroidView(
             modifier = Modifier.fillMaxSize(),
@@ -180,6 +193,12 @@ fun ExploreMap(
                         MapEventsOverlay(
                             object : MapEventsReceiver {
                                 override fun singleTapConfirmedHelper(p: GeoPoint): Boolean {
+                                    // A tap here means it landed on the bare
+                                    // map, not a marker — those are Compose
+                                    // overlays with their own onClick, which
+                                    // intercepts the touch before it ever
+                                    // reaches this osmdroid-level listener.
+                                    followPausedUntil.value = 0L
                                     activeCalloutId = if (currentIsReporting.value) {
                                         currentOnReportTap.value(p)
                                     } else {
@@ -224,17 +243,44 @@ fun ExploreMap(
             officialRoadworks.addAll(RoadworkRepository.roadworksOnRoute(route.geometry))
         }
 
-        // Follows the vehicle unconditionally while navigating — every live
-        // fix (see MainActivity's LocationRepository.trackLocation collector,
-        // which is what actually changes vehiclePosition/currentSpeedKmh)
+        // Follows the vehicle while navigating — every live fix (see
+        // MainActivity's LocationRepository.trackLocation collector, which
+        // is what actually changes vehiclePosition/currentSpeedKmh)
         // re-centers and re-zooms the camera, per "user location is always
-        // on center." No pan-away/Recenter escape hatch: a manual pinch or
-        // drag is simply overridden by the next fix a couple of seconds later.
+        // on center." A manual pinch/zoom pauses this for
+        // AutoFollowPauseMillis instead of snapping back on the very next
+        // fix — detected by comparing the map's actual zoom against
+        // lastCommandedZoom (what we ourselves last set), not a
+        // freshly-recomputed "expected" zoom, since that would drift from
+        // the last commanded value purely from currentSpeedKmh changing
+        // and falsely read as a user zoom. Tapping empty map (see
+        // MapEventsOverlay above) or the pause timer elapsing both resume
+        // it — either clears followPausedUntil, and the tick after that
+        // resume forces a recenter unconditionally rather than re-running
+        // the mismatch check (the user's old zoom would still be in
+        // effect for that one tick, which would otherwise immediately
+        // re-pause it forever).
         LaunchedEffect(isNavigating, vehiclePosition, currentSpeedKmh) {
             if (!isNavigating) return@LaunchedEffect
             val mv = mapView ?: return@LaunchedEffect
-            mv.controller.setZoom(zoomForSpeedKmh(currentSpeedKmh))
+            val now = System.currentTimeMillis()
+
+            if (now < followPausedUntil.value) return@LaunchedEffect
+
+            val wasPaused = followPausedUntil.value != 0L
+            if (!wasPaused) {
+                val commanded = lastCommandedZoom.value
+                if (commanded != null && kotlin.math.abs(mv.zoomLevelDouble - commanded) > ZoomMatchTolerance) {
+                    followPausedUntil.value = now + AutoFollowPauseMillis
+                    return@LaunchedEffect
+                }
+            }
+            followPausedUntil.value = 0L
+
+            val zoom = zoomForSpeedKmh(currentSpeedKmh)
+            mv.controller.setZoom(zoom)
             mv.controller.animateTo(vehiclePosition)
+            lastCommandedZoom.value = zoom
         }
 
         // Fits the selected route's full geometry on screen right after
@@ -373,6 +419,17 @@ fun ExploreMap(
                     enabled = canStartNavigation,
                     onClick = onStartNavigation,
                 )
+                // Debug-only — drives navigation off RouteSimulator's
+                // fabricated GPS fixes instead of a real location, for
+                // testing without actually driving. See RouteSimulator.kt.
+                if (canStartNavigation) {
+                    Pill(
+                        text = "Simulate drive",
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        onClick = onSimulateDrive,
+                    )
+                }
                 // Disabled — user-submitted road-work reporting. Re-enable by
                 // restoring this Pill; onToggleReportRoadWork/isReportingRoadWork
                 // and the map-tap-to-place-report flow are still wired up.
@@ -461,6 +518,12 @@ private fun zoomForSpeedKmh(speedKmh: Double): Double = when {
     speedKmh < 110 -> 14.5
     else -> 14.0
 }
+
+/** How long a manual pinch/zoom pauses the auto-follow camera before it resumes on its own. */
+private const val AutoFollowPauseMillis = 60_000L
+
+/** Zoom-level difference beyond which the map's actual zoom no longer counts as matching what auto-follow last commanded — i.e. the user must have pinched. */
+private const val ZoomMatchTolerance = 0.3
 
 /** One-time osmdroid setup: a distinct user agent (required by OSM's tile usage policy) and an app-private tile cache. */
 private var osmdroidConfigured = false

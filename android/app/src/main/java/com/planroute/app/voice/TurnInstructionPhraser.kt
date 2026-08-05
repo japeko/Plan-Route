@@ -12,11 +12,31 @@ import com.planroute.app.repository.RouteStep
 fun RouteStep.localizedInstruction(languageCode: String?): String {
     val base = baseInstructionFor(maneuverType, maneuverModifier, languageCode)
     if (streetName.isBlank()) return base
+    // "Arrive at destination onto X" doesn't read as a sentence the way
+    // "Turn left onto X" does — every language uses the parenthetical
+    // form for the arrive step specifically.
+    if (maneuverType == "arrive") return "$base ($streetName)"
     return when (languageCode) {
         "fi", "fin" -> "$base ($streetName)"
         "sv", "swe" -> "$base ($streetName)"
         else -> "$base onto $streetName"
     }
+}
+
+/**
+ * A directional glyph for the navigation banner's turn icon, driven purely
+ * by OSRM's modifier — language-independent, and deliberately not keyed on
+ * maneuverType, so an "arrive" step with modifier "right" (destination is
+ * on the right) shows the same right-pointing arrow a "turn right" would,
+ * rather than freezing on whatever the previous turn's arrow happened to
+ * be (the banner used to show one hardcoded glyph forever, regardless of
+ * the current step).
+ */
+fun arrowGlyphFor(modifier: String?): String = when (modifier) {
+    "left", "sharp left", "slight left" -> "↰"
+    "right", "sharp right", "slight right" -> "↱"
+    "uturn" -> "↩"
+    else -> "↑"
 }
 
 /** Wraps [instruction] with a lead-distance prefix ("In 200 m, ...") in the given language. */
@@ -36,9 +56,16 @@ private fun baseInstructionFor(type: String, modifier: String?, languageCode: St
 
 private fun baseInstructionEn(type: String, modifier: String?): String = when (type) {
     "depart" -> "Head out"
-    "arrive" -> "Arrive at destination"
-    "roundabout", "rotary", "roundabout turn", "exit roundabout", "exit rotary" ->
-        "At the roundabout, go ${modifierPhraseEn(modifier)}"
+    "arrive" -> when (modifier) {
+        "left" -> "Arrive at destination, on the left"
+        "right" -> "Arrive at destination, on the right"
+        else -> "Arrive at destination"
+    }
+    "roundabout", "rotary", "roundabout turn" -> "At the roundabout, go ${modifierPhraseEn(modifier)}"
+    // A separate step OSRM sometimes emits right after "roundabout" for
+    // the actual exit onto the new street — phrased as a plain turn, not
+    // "at the roundabout..." again, or the two steps sound identical.
+    "exit roundabout", "exit rotary" -> "Turn ${modifierPhraseEn(modifier)}"
     "merge" -> "Merge ${modifierPhraseEn(modifier)}"
     "on ramp" -> "Take the ramp"
     "off ramp" -> "Take the exit"
@@ -63,9 +90,16 @@ private fun modifierPhraseEn(modifier: String?): String = when (modifier) {
 
 private fun baseInstructionFi(type: String, modifier: String?): String = when (type) {
     "depart" -> "Lähdetään matkaan"
-    "arrive" -> "Saavuit määränpäähän"
-    "roundabout", "rotary", "roundabout turn", "exit roundabout", "exit rotary" ->
-        "Liikenneympyrässä käänny ${modifierPhraseFi(modifier)}"
+    "arrive" -> when (modifier) {
+        "left" -> "Saavuit määränpäähän, vasemmalla"
+        "right" -> "Saavuit määränpäähän, oikealla"
+        else -> "Saavuit määränpäähän"
+    }
+    "roundabout", "rotary", "roundabout turn" -> "Liikenneympyrässä käänny ${modifierPhraseFi(modifier)}"
+    // A separate step OSRM sometimes emits right after "roundabout" for
+    // the actual exit onto the new street — phrased as a plain turn, not
+    // "liikenneympyrässä..." again, or the two steps sound identical.
+    "exit roundabout", "exit rotary" -> "Käänny ${modifierPhraseFi(modifier)}"
     "merge" -> "Liity kaistalle ${modifierPhraseFi(modifier)}"
     "on ramp" -> "Aja rampille"
     "off ramp" -> "Aja rampilta ulos"
@@ -90,9 +124,16 @@ private fun modifierPhraseFi(modifier: String?): String = when (modifier) {
 
 private fun baseInstructionSv(type: String, modifier: String?): String = when (type) {
     "depart" -> "Kör iväg"
-    "arrive" -> "Framme vid resmålet"
-    "roundabout", "rotary", "roundabout turn", "exit roundabout", "exit rotary" ->
-        "Vid rondellen, sväng ${modifierPhraseSv(modifier)}"
+    "arrive" -> when (modifier) {
+        "left" -> "Framme vid resmålet, till vänster"
+        "right" -> "Framme vid resmålet, till höger"
+        else -> "Framme vid resmålet"
+    }
+    "roundabout", "rotary", "roundabout turn" -> "Vid rondellen, sväng ${modifierPhraseSv(modifier)}"
+    // A separate step OSRM sometimes emits right after "roundabout" for
+    // the actual exit onto the new street — phrased as a plain turn, not
+    // "vid rondellen..." again, or the two steps sound identical.
+    "exit roundabout", "exit rotary" -> "Sväng ${modifierPhraseSv(modifier)}"
     "merge" -> "Kör in ${modifierPhraseSv(modifier)}"
     "on ramp" -> "Kör upp på påfarten"
     "off ramp" -> "Kör av vid avfarten"
