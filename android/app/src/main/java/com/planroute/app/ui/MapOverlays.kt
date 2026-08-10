@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Hotel
 import androidx.compose.material.icons.filled.LocalGasStation
 import androidx.compose.material.icons.filled.Navigation
 import androidx.compose.material.icons.filled.RecordVoiceOver
+import androidx.compose.material.icons.filled.Restaurant
 import androidx.compose.material.icons.filled.Terrain
 import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Card
@@ -71,10 +72,12 @@ import com.planroute.app.repository.PlannedRoute
 import com.planroute.app.repository.RoadworkRepository
 import com.planroute.app.ui.theme.RouteAltLine
 import com.planroute.app.ui.theme.RouteCamping
+import com.planroute.app.ui.theme.RouteDetour
 import com.planroute.app.ui.theme.RouteEnd
 import com.planroute.app.ui.theme.RouteHotel
 import com.planroute.app.ui.theme.RouteNavAccent
 import com.planroute.app.ui.theme.RoutePrimary
+import com.planroute.app.ui.theme.RouteRestaurant
 import com.planroute.app.ui.theme.RouteStart
 import com.planroute.app.ui.theme.RouteWarn
 import kotlin.math.roundToInt
@@ -143,9 +146,12 @@ fun ExploreMap(
     onMapTapWhileReporting: (GeoPoint) -> Int,
     plannedRoutes: List<PlannedRoute> = emptyList(),
     selectedRouteId: Int? = null,
+    /** The route back onto the planned route once the driver has strayed off it — see MainActivity's off-route detection. Drawn alongside, not instead of, the planned route(s). */
+    detourGeometry: List<GeoPoint> = emptyList(),
     canStartNavigation: Boolean,
     onStartNavigation: () -> Unit,
     onSimulateDrive: () -> Unit,
+    onSimulateOffRoute: () -> Unit,
     onToggleReportRoadWork: () -> Unit,
     selectedVoiceLabel: String,
     onOpenVoicePicker: () -> Unit,
@@ -226,7 +232,7 @@ fun ExploreMap(
                     )
                 }.also { mapView = it }
             },
-            update = { view -> view.syncRouteOverlays(plannedRoutes, selectedRouteId) },
+            update = { view -> view.syncRouteOverlays(plannedRoutes, selectedRouteId, detourGeometry) },
         )
 
         DisposableEffect(Unit) {
@@ -429,6 +435,14 @@ fun ExploreMap(
                         contentColor = MaterialTheme.colorScheme.onSurface,
                         onClick = onSimulateDrive,
                     )
+                    // Same, but drifts off the route partway through — for
+                    // exercising the off-route detour-back feature.
+                    Pill(
+                        text = "Simulate off-route",
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        onClick = onSimulateOffRoute,
+                    )
                 }
                 // Disabled — user-submitted road-work reporting. Re-enable by
                 // restoring this Pill; onToggleReportRoadWork/isReportingRoadWork
@@ -485,19 +499,20 @@ fun ExploreMap(
             )
 
             // No background/Surface here on purpose — the map should stay
-            // visible behind it. The dark text shadow carries legibility
-            // instead, over whatever tiles/roads happen to be underneath.
+            // visible behind it. A light halo shadow carries legibility
+            // instead, over whatever tiles/roads happen to be underneath —
+            // a dark shadow wouldn't add contrast behind this dark navy text.
             Text(
                 "${currentSpeedKmh.roundToInt()} km/h",
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
                     .padding(bottom = 28.dp),
-                color = Color.White,
+                color = Color(0xFF000080),
                 fontSize = 52.sp,
                 fontWeight = FontWeight.Bold,
                 style = TextStyle(
-                    shadow = Shadow(color = Color.Black.copy(alpha = 0.7f), offset = Offset(0f, 2f), blurRadius = 10f),
+                    shadow = Shadow(color = Color.White.copy(alpha = 0.8f), offset = Offset(0f, 0f), blurRadius = 12f),
                 ),
             )
         }
@@ -509,14 +524,16 @@ fun ExploreMap(
  * wider (lower zoom number = more area visible) as speed climbs, so a
  * driver going faster sees further down the road rather than a
  * close-up that's scrolling past too quickly to read. Breakpoints match
- * the requirement: 50/70/90/110 km/h.
+ * the requirement: 50/70/90/110 km/h. Bumped up a full level from the
+ * original set after in-vehicle testing showed the map needed to be
+ * noticeably closer to read at a glance while driving.
  */
 private fun zoomForSpeedKmh(speedKmh: Double): Double = when {
-    speedKmh < 50 -> 17.0
-    speedKmh < 70 -> 16.0
-    speedKmh < 90 -> 15.0
-    speedKmh < 110 -> 14.5
-    else -> 14.0
+    speedKmh < 50 -> 18.0
+    speedKmh < 70 -> 17.0
+    speedKmh < 90 -> 16.0
+    speedKmh < 110 -> 15.5
+    else -> 15.0
 }
 
 /** How long a manual pinch/zoom pauses the auto-follow camera before it resumes on its own. */
@@ -546,7 +563,7 @@ private fun MapView.screenOffsetPx(point: GeoPoint): IntOffset {
 }
 
 /** Redraws OSRM route alternatives as native osmdroid polylines — selected route solid, others dashed. */
-private fun MapView.syncRouteOverlays(routes: List<PlannedRoute>, selectedRouteId: Int?) {
+private fun MapView.syncRouteOverlays(routes: List<PlannedRoute>, selectedRouteId: Int?, detourGeometry: List<GeoPoint>) {
     overlays.removeAll { it is Polyline }
     routes.forEach { planned ->
         val isSelected = planned.option.id == selectedRouteId
@@ -562,6 +579,19 @@ private fun MapView.syncRouteOverlays(routes: List<PlannedRoute>, selectedRouteI
             outlinePaint.pathEffect = if (isSelected) null else android.graphics.DashPathEffect(floatArrayOf(16f, 12f), 0f)
         }
         overlays.add(line)
+    }
+    // Drawn alongside the planned route(s) above, never replacing them —
+    // the original route stays put so the driver can see both where they
+    // were headed and the way back to it.
+    if (detourGeometry.size >= 2) {
+        val detourLine = Polyline().apply {
+            infoWindow = null
+            setPoints(detourGeometry)
+            outlinePaint.color = RouteDetour.toArgb()
+            outlinePaint.strokeWidth = 8f
+            outlinePaint.pathEffect = android.graphics.DashPathEffect(floatArrayOf(10f, 10f), 0f)
+        }
+        overlays.add(detourLine)
     }
     invalidate()
 }
@@ -653,6 +683,7 @@ private val PoiType.icon
         PoiType.GAS -> Icons.Filled.LocalGasStation
         PoiType.CAMPING -> Icons.Filled.Terrain
         PoiType.HOTEL -> Icons.Filled.Hotel
+        PoiType.RESTAURANT -> Icons.Filled.Restaurant
         PoiType.ROAD_WORK -> Icons.Filled.Warning
     }
 
@@ -661,6 +692,7 @@ private val PoiType.tint
         PoiType.GAS -> RoutePrimary
         PoiType.CAMPING -> RouteCamping
         PoiType.HOTEL -> RouteHotel
+        PoiType.RESTAURANT -> RouteRestaurant
         PoiType.ROAD_WORK -> RouteWarn
     }
 
@@ -734,7 +766,8 @@ private fun PoiCallout(
             Text(marker.title, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.titleSmall)
             Text(marker.description, style = MaterialTheme.typography.bodySmall)
             when {
-                marker.type == PoiType.GAS || marker.type == PoiType.CAMPING || marker.type == PoiType.HOTEL -> Pill(
+                marker.type == PoiType.GAS || marker.type == PoiType.CAMPING ||
+                    marker.type == PoiType.HOTEL || marker.type == PoiType.RESTAURANT -> Pill(
                     text = "Add as stop",
                     modifier = Modifier.padding(top = 8.dp),
                     containerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -782,6 +815,7 @@ private fun LegendPopover(modifier: Modifier = Modifier) {
             LegendDotRow("Route / via", RoutePrimary)
             LegendDotRow("End", RouteEnd)
             LegendIconRow("Gas stations", PoiType.GAS)
+            LegendIconRow("Restaurants", PoiType.RESTAURANT)
             LegendIconRow("Camping", PoiType.CAMPING)
             LegendIconRow("Hotels & hostels", PoiType.HOTEL)
             LegendIconRow("Road work", PoiType.ROAD_WORK)

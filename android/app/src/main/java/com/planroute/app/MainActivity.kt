@@ -162,6 +162,10 @@ fun PlanRouteApp() {
     // fixes instead of real GPS — see the LaunchedEffect(isNavigating)
     // below, which branches on this to pick the location source.
     var isSimulatingDrive by remember { mutableStateOf(false) }
+    // Debug-only: when the simulated drive is running, also has it drift
+    // off the route for a stretch — for exercising the off-route
+    // detour-back feature without an actual wrong turn.
+    var isSimulatingOffRoute by remember { mutableStateOf(false) }
 
     // Live position/speed while driving — ExploreMap uses both to keep the
     // vehicle centered and to pick a zoom level for the current speed (see
@@ -182,6 +186,11 @@ fun PlanRouteApp() {
     var navInstruction by remember { mutableStateOf("") }
     var navDistanceMeters by remember { mutableStateOf<Int?>(null) }
     var navManeuverModifier by remember { mutableStateOf<String?>(null) }
+    // The route back onto the plan once the driver strays off it — see the
+    // off-route detection inside LaunchedEffect(isNavigating) below. Drawn
+    // by ExploreMap alongside the planned route, not instead of it; empty
+    // means "on route" or "not navigating."
+    var detourGeometry by remember { mutableStateOf<List<GeoPoint>>(emptyList()) }
 
     var startAddress by remember { mutableStateOf("") }
     var endAddress by remember { mutableStateOf("") }
@@ -201,6 +210,8 @@ fun PlanRouteApp() {
             liveVehiclePosition = null
             currentSpeedKmh = 0.0
             isSimulatingDrive = false
+            isSimulatingOffRoute = false
+            detourGeometry = emptyList()
             return@LaunchedEffect
         }
         val route = plannedRoutes.firstOrNull { it.option.id == selectedRouteId }
@@ -286,8 +297,34 @@ fun PlanRouteApp() {
             }
         }
 
+        // If the vehicle strays more than OffRouteThresholdMeters from the
+        // planned route's own path, compute a route from here back onto
+        // it — rejoining ahead of current progress, never behind it, so
+        // the detour doesn't send the driver backward — and show that as
+        // a second polyline (see ExploreMap's detourGeometry param). The
+        // planned route itself is never touched: turn-by-turn progress
+        // above keeps comparing against it exactly as before, and once
+        // the driver is back within range the detour line is cleared.
+        suspend fun updateDetour(position: GeoPoint) {
+            if (geometry.isEmpty()) return
+            val offRouteDistance = geometry.minOf { position.distanceToAsDouble(it) }
+            if (offRouteDistance <= OffRouteThresholdMeters) {
+                if (detourGeometry.isNotEmpty()) detourGeometry = emptyList()
+                return
+            }
+            if (detourGeometry.isNotEmpty()) return
+
+            val progress = distanceAlongRoute(position)
+            val rejoinPoint = geometry.indices
+                .filter { cumulative[it] >= progress }
+                .minByOrNull { position.distanceToAsDouble(geometry[it]) }
+                ?.let { geometry[it] }
+                ?: geometry.last()
+            detourGeometry = RoutingRepository.route(listOf(position, rejoinPoint)).firstOrNull()?.geometry ?: emptyList()
+        }
+
         val locations = if (isSimulatingDrive && route != null) {
-            RouteSimulator.simulateDrive(route)
+            RouteSimulator.simulateDrive(route, simulateOffRoute = isSimulatingOffRoute)
         } else {
             LocationRepository.trackLocation(context)
         }
@@ -301,6 +338,7 @@ fun PlanRouteApp() {
                 vehicleBearingDegrees = location.bearing
             }
             updateNavigationProgress(position)
+            updateDetour(position)
         }
     }
 
@@ -338,6 +376,7 @@ fun PlanRouteApp() {
                         showGasStations = "Gas stations" in selectedFilters,
                         gasMaxDistanceMeters = gasMaxDistanceMeters.toDouble(),
                         gasAmenities = gasAmenities.toSet(),
+                        showRestaurants = "Restaurants" in selectedFilters,
                         showCamping = "Camping" in selectedFilters,
                         campingMaxDistanceMeters = campingMaxDistanceMeters.toDouble(),
                         showAccommodation = "Hotels" in selectedFilters,
@@ -592,9 +631,11 @@ fun PlanRouteApp() {
                 },
                 plannedRoutes = plannedRoutes,
                 selectedRouteId = selectedRouteId,
+                detourGeometry = detourGeometry,
                 canStartNavigation = mode == SheetMode.COMPARING,
                 onStartNavigation = { requestLocationPermissionThen { isNavigating = true } },
                 onSimulateDrive = { isSimulatingDrive = true; isNavigating = true },
+                onSimulateOffRoute = { isSimulatingDrive = true; isSimulatingOffRoute = true; isNavigating = true },
                 onToggleReportRoadWork = { isReportingRoadWork = !isReportingRoadWork },
                 selectedVoiceLabel = selectedVoice?.label?.let { "Voice: $it" } ?: "Voice",
                 onOpenVoicePicker = { showVoicePicker = true },
@@ -637,6 +678,9 @@ private const val NavArriveThresholdMeters = 40
 
 /** An "in X m, do the next thing" lead announcement fires once the vehicle is this close to the upcoming maneuver. */
 private const val NavPreAnnounceThresholdMeters = 200
+
+/** How far the vehicle can stray from the planned route's own path before it counts as "lost" and a detour back to it is computed. */
+private const val OffRouteThresholdMeters = 60.0
 
 private fun formatNavDistance(meters: Int): String =
     if (meters >= 1000) "%.1f km".format(meters / 1000f) else "$meters m"

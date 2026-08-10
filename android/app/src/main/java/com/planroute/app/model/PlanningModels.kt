@@ -27,7 +27,7 @@ data class RouteOption(
     val durationMinutes: Int,
 )
 
-enum class PoiType { GAS, CAMPING, HOTEL, ROAD_WORK }
+enum class PoiType { GAS, CAMPING, HOTEL, RESTAURANT, ROAD_WORK }
 
 /** What a gas station offers — the amenities the POI server can filter gas stations by. */
 enum class GasAmenity(val label: String) {

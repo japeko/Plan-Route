@@ -4,6 +4,7 @@ import android.location.Location
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlin.math.asin
 import kotlin.math.atan2
 import kotlin.math.cos
 import kotlin.math.sin
@@ -32,7 +33,22 @@ object RouteSimulator {
     private const val MinSpeedMps = 3.0
     private const val MaxSpeedMps = 40.0
 
-    fun simulateDrive(route: PlannedRoute): Flow<Location> = flow {
+    // Where simulateOffRoute deliberately drifts sideways off the planned
+    // route — a fixed stretch (fraction of total route distance) rather
+    // than the whole trip, so the rest of the drive still exercises normal
+    // on-route navigation before and after.
+    private const val OffRouteStartFraction = 0.25
+    private const val OffRouteEndFraction = 0.4
+    private const val OffRouteOffsetMeters = 250.0
+
+    /**
+     * [simulateOffRoute], when true, drifts the emitted position sideways
+     * off the route's own path for a stretch in the middle of the drive —
+     * for exercising MainActivity's off-route detection/detour-back
+     * feature without needing OS-level mock-location or an actual wrong
+     * turn. The route itself and the driving pace are otherwise unchanged.
+     */
+    fun simulateDrive(route: PlannedRoute, simulateOffRoute: Boolean = false): Flow<Location> = flow {
         val geometry = route.geometry
         if (geometry.size < 2) return@flow
 
@@ -79,13 +95,21 @@ object RouteSimulator {
             )
         }
 
+        val offRouteStart = totalDistance * OffRouteStartFraction
+        val offRouteEnd = totalDistance * OffRouteEndFraction
+
         var distanceTraveled = 0.0
         var previousPosition = geometry.first()
         while (distanceTraveled < totalDistance) {
             val speedMps = speedMpsAt(distanceTraveled)
             distanceTraveled = (distanceTraveled + speedMps * TickSeconds).coerceAtMost(totalDistance)
-            val position = positionAt(distanceTraveled)
-            val headingDegrees = bearingBetween(previousPosition, position)
+            val onPathPosition = positionAt(distanceTraveled)
+            val headingDegrees = bearingBetween(previousPosition, onPathPosition)
+            val position = if (simulateOffRoute && distanceTraveled in offRouteStart..offRouteEnd) {
+                offsetPosition(onPathPosition, headingDegrees + 90f, OffRouteOffsetMeters)
+            } else {
+                onPathPosition
+            }
             emit(
                 Location("simulated").apply {
                     latitude = position.latitude
@@ -95,10 +119,27 @@ object RouteSimulator {
                     time = System.currentTimeMillis()
                 },
             )
-            previousPosition = position
+            previousPosition = onPathPosition
             delay(TickMillis)
         }
     }
+}
+
+private const val EarthRadiusMeters = 6_371_000.0
+
+/** The point [distanceMeters] away from [start] in direction [bearingDegrees] — standard spherical-Earth destination-point formula. */
+private fun offsetPosition(start: GeoPoint, bearingDegrees: Float, distanceMeters: Double): GeoPoint {
+    val angularDistance = distanceMeters / EarthRadiusMeters
+    val bearingRad = Math.toRadians(bearingDegrees.toDouble())
+    val lat1 = Math.toRadians(start.latitude)
+    val lon1 = Math.toRadians(start.longitude)
+
+    val lat2 = asin(sin(lat1) * cos(angularDistance) + cos(lat1) * sin(angularDistance) * cos(bearingRad))
+    val lon2 = lon1 + atan2(
+        sin(bearingRad) * sin(angularDistance) * cos(lat1),
+        cos(angularDistance) - sin(lat1) * sin(lat2),
+    )
+    return GeoPoint(Math.toDegrees(lat2), Math.toDegrees(lon2))
 }
 
 private fun bearingBetween(from: GeoPoint, to: GeoPoint): Float {

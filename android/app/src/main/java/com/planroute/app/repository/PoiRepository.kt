@@ -22,6 +22,8 @@ data class PoiSearchSettings(
     val showGasStations: Boolean,
     val gasMaxDistanceMeters: Double,
     val gasAmenities: Set<GasAmenity>,
+    /** Shares gasMaxDistanceMeters as its search radius — the server's alongRouteRequestSchema has one radiusMeters field covering both gas stations and standalone restaurants, not a separate one per type. */
+    val showRestaurants: Boolean,
     val showCamping: Boolean,
     val campingMaxDistanceMeters: Double,
     val showAccommodation: Boolean,
@@ -30,20 +32,22 @@ data class PoiSearchSettings(
 
 /**
  * Wraps this project's own POI server (packages/server's
- * `/api/pois/along-route`) — gas stations, camping areas, and hotels/
- * hostels along a planned route. Address configured locally via .env; see
- * [com.planroute.app.network.PoiApi] for the exact request/response shape
- * this mirrors.
+ * `/api/pois/along-route`) — gas stations, restaurants, camping areas, and
+ * hotels/hostels along a planned route. Address configured locally via
+ * .env; see [com.planroute.app.network.PoiApi] for the exact request/
+ * response shape this mirrors.
  */
 object PoiRepository {
     suspend fun searchAlongRoute(routeGeometry: List<GeoPoint>, settings: PoiSearchSettings): List<PoiMarker> {
         if (routeGeometry.size < 2) return emptyList()
-        if (!settings.showGasStations && !settings.showCamping && !settings.showAccommodation) return emptyList()
+        if (!settings.showGasStations && !settings.showRestaurants && !settings.showCamping && !settings.showAccommodation) {
+            return emptyList()
+        }
 
         val request = PoiAlongRouteRequest(
             route = GeoLineStringDto(coordinates = routeGeometry.map { listOf(it.longitude, it.latitude) }),
             radiusMeters = settings.gasMaxDistanceMeters,
-            showRestaurants = false,
+            showRestaurants = settings.showRestaurants,
             showGasStations = settings.showGasStations,
             fuelTypes = settings.gasAmenities.mapNotNull {
                 when (it) {
@@ -83,6 +87,7 @@ private fun PoiDto.toMarker(index: Int): PoiMarker? {
             "Caravan sites".takeIf { hasCaravanSites == true },
         ).joinToString(", ").ifBlank { "Camping area" }
         "accommodation" -> PoiType.HOTEL to (category?.replaceFirstChar(Char::uppercase) ?: "Hotel / hostel")
+        "restaurant" -> PoiType.RESTAURANT to "Restaurant"
         else -> return null
     }
     val (lon, lat) = location.coordinates

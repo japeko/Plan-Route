@@ -33,9 +33,9 @@ data class GeoPointDto(
 /**
  * Matches packages/server's `alongRouteRequestSchema` exactly. Two
  * details worth knowing:
- *  - `radiusMeters` is shared by gas stations *and* restaurants server-side;
- *    since this client never asks for standalone restaurants, it's used as
- *    the gas-station radius and [showRestaurants] is always false.
+ *  - `radiusMeters` is shared by gas stations *and* standalone restaurants
+ *    server-side — there's no separate restaurant radius field, so this
+ *    client reuses the gas-station distance setting for both.
  *  - the radius fields are required (server validates `.positive()`)
  *    regardless of whether the matching `show*` flag is true — the server
  *    just ignores a radius whose category isn't requested.

@@ -26,3 +26,7 @@ val RouteAltLine = Color(0xFFB8C1C8)
 // common fuel-pump convention); camping/hotel get colors of their own.
 val RouteCamping = Color(0xFF0C8599)
 val RouteHotel = Color(0xFF7048E8)
+val RouteRestaurant = Color(0xFFE8590C)
+
+/** The "back to the planned route" detour line drawn when the driver strays off it — deliberately distinct from every route/POI color above so it can't be mistaken for the selected route itself. */
+val RouteDetour = Color(0xFF9C36B5)

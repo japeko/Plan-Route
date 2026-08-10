@@ -53,7 +53,7 @@ import com.planroute.app.ui.theme.RoutePrimary
 import com.planroute.app.ui.theme.RouteStart
 import kotlin.math.roundToInt
 
-val PoiFilterOptions = listOf("Gas stations", "Camping", "Hotels")
+val PoiFilterOptions = listOf("Gas stations", "Restaurants", "Camping", "Hotels")
 
 /**
  * Everything the "along the route" POI search needs from the caller —
@@ -282,15 +282,27 @@ private fun PoiFilterChips(selectedFilters: Set<String>, onToggleFilter: (String
             }
         }
 
-        if ("Gas stations" in selectedFilters) {
+        val showGasStations = "Gas stations" in selectedFilters
+        val showRestaurants = "Restaurants" in selectedFilters
+        if (showGasStations || showRestaurants) {
+            // Restaurants share the gas stations distance setting — the
+            // server has one radius covering both categories, not a
+            // separate one per type (see PoiRepository.PoiSearchSettings).
+            val title = when {
+                showGasStations && showRestaurants -> "Gas stations & restaurants, distance from route"
+                showRestaurants -> "Restaurants, distance from route"
+                else -> "Gas stations, distance from route"
+            }
             DistanceSliderRow(
-                title = "Gas stations, distance from route",
+                title = title,
                 valueMeters = filterState.gasMaxDistanceMeters,
                 valueRange = 0f..5000f,
                 onValueChange = filterState.onGasDistanceChange,
                 onValueChangeFinished = filterState.onGasDistanceCommit,
             )
-            GasAmenityChips(selected = filterState.gasAmenities, onToggle = filterState.onToggleGasAmenity)
+            if (showGasStations) {
+                GasAmenityChips(selected = filterState.gasAmenities, onToggle = filterState.onToggleGasAmenity)
+            }
         }
         if ("Camping" in selectedFilters) {
             DistanceSliderRow(
